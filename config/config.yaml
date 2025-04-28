@@ -1,0 +1,15 @@
+env: "local"
+
+grpc_server:
+  port: 4404
+  timeout: 10h
+  
+
+
+
+database:
+  host:
+  port:
+  user:
+  password:
+  name:
