@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/joho/godotenv"
+	"github.com/zhavkk/gRPC_auth_service/internal/app"
 	"github.com/zhavkk/gRPC_auth_service/internal/config"
 )
 
@@ -27,11 +28,13 @@ func main() {
 	log := setupLogger(cfg.Env)
 
 	log.Info("starting app", slog.Any("env", cfg))
-
 	//TODO: application
+	dsn := "postgres://username:password@host:port/dbname?sslmode=disable" // temp
+	application := app.New(log, cfg.GRPC.Port, dsn, cfg.TokenTTL)
 
 	//TODO: run gRPC
 
+	application.GRPCsrv.MustRun()
 }
 
 func setupLogger(env string) *slog.Logger {
