@@ -1,5 +1,4 @@
 env: "local"
-
 token_ttl: 1h
 grpc_server:
   port: 4404

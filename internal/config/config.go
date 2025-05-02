@@ -1,6 +1,7 @@
 package config
 
 import (
+	"log"
 	"os"
 	"time"
 
@@ -33,12 +34,12 @@ func MustLoad() *Config {
 		panic("Config path is not set")
 	}
 	if _, err := os.Stat(configPath); err != nil {
-		panic("config file does not exist: %s" + configPath)
+		log.Fatalf("config file does not exist: %s", configPath)
 	}
 	var cfg Config
 	// need to go get cleanenv
 	if err := cleanenv.ReadConfig(configPath, &cfg); err != nil {
-		panic("can't read config %s" + err.Error())
+		log.Fatalf("can't read config %s", err.Error())
 	}
 	return &cfg
 }

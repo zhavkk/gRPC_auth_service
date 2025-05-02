@@ -4,6 +4,8 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/joho/godotenv"
 	"github.com/zhavkk/gRPC_auth_service/internal/app"
@@ -33,8 +35,20 @@ func main() {
 	application := app.New(log, cfg.GRPC.Port, dsn, cfg.TokenTTL)
 
 	//TODO: run gRPC
+	go application.GRPCsrv.MustRun()
 
-	application.GRPCsrv.MustRun()
+	//Graceful shutdown
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
+
+	marker := <-stop
+
+	log.Info("stopping application ", slog.String("signal: ", marker.String()))
+
+	application.GRPCsrv.Stop()
+
+	log.Info("application stopped sucessfully")
 }
 
 func setupLogger(env string) *slog.Logger {
