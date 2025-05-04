@@ -12,13 +12,32 @@ func (s *serverAPI) Login(ctx context.Context, req *authproto.LoginRequest) (*au
 	if err := s.validator.ValidateLoginRequest(req); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	panic("todo")
+
+	resp, err := s.service.Login(ctx, req.GetEmail(), req.GetPassword())
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+
+	return &authproto.LoginResponse{
+		Id:       resp.ID,
+		Username: resp.Username,
+		Email:    resp.Email,
+		Role:     resp.Role,
+		Token:    resp.Token,
+	}, nil
 }
 
 func (s *serverAPI) ChangePassword(ctx context.Context, req *authproto.ChangePasswordRequest) (*authproto.ChangePasswordResponse, error) {
 	if err := s.validator.ValidateChangePasswordRequest(req); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
+	resp, err := s.service.ChangePassword(ctx, req.GetId(), req.GetOldPassword(), req.GetNewPassword())
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+	resp.Success = true
 
-	panic("todo")
+	return &authproto.ChangePasswordResponse{
+		Success: resp.Success,
+	}, nil
 }

@@ -13,10 +13,21 @@ func (s *serverAPI) Register(ctx context.Context, req *authproto.RegisterRequest
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	// logika s bd
+	resp, err := s.service.Register(
+		ctx, req.GetUsername(),
+		req.GetEmail(),
+		req.GetPassword(),
+		req.GetGender(),
+		req.GetCountry(),
+		req.GetAge(),
+	)
+
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
 
 	return &authproto.RegisterResponse{
-		Id: "randomuuid",
+		Id: resp.ID,
 	}, nil
 }
 
@@ -24,5 +35,19 @@ func (s *serverAPI) GetUser(ctx context.Context, req *authproto.GetUserRequest) 
 	if err := s.validator.ValidateGetUserRequest(req); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	panic("todo")
+
+	resp, err := s.service.GetUser(ctx, req.GetId())
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
+	}
+
+	return &authproto.GetUserResponse{
+		Id:       resp.ID,
+		Username: resp.Username,
+		Email:    resp.Email,
+		Gender:   resp.Gender,
+		Country:  resp.Country,
+		Age:      resp.Age,
+		Role:     resp.Role,
+	}, nil
 }
