@@ -35,8 +35,9 @@ func main() {
 	application := app.New(log, cfg.GRPC.Port, dsn, cfg.TokenTTL)
 
 	//TODO: run gRPC
-	go application.GRPCsrv.MustRun()
-
+	go func() {
+		application.GRPCsrv.MustRun()
+	}()
 	//Graceful shutdown
 
 	stop := make(chan os.Signal, 1)
