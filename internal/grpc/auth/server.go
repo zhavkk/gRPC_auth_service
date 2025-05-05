@@ -4,12 +4,12 @@ import (
 	"context"
 
 	authproto "github.com/zhavkk/Auth-protobuf/gen/go/auth"
+	"github.com/zhavkk/gRPC_auth_service/internal/domain"
 	"github.com/zhavkk/gRPC_auth_service/internal/validation"
 	"google.golang.org/grpc"
 )
 
 type AuthService interface {
-	// Register регистрирует нового пользователя
 	Register(
 		ctx context.Context,
 		username string,
@@ -18,44 +18,39 @@ type AuthService interface {
 		gender bool,
 		country string,
 		age int32,
-	) (*RegisterResponse, error)
+	) (*domain.RegisterResponse, error)
 
-	// Login выполняет вход пользователя
 	Login(
 		ctx context.Context,
 		email string,
 		password string,
-	) (*LoginResponse, error)
+	) (*domain.LoginResponse, error)
 
-	// SetUserRole устанавливает роль пользователя
 	SetUserRole(
 		ctx context.Context,
 		id string,
 		role string,
-	) (*SetUserRoleResponse, error)
+	) (*domain.SetUserRoleResponse, error)
 
-	// GetUser получает информацию о пользователе
 	GetUser(
 		ctx context.Context,
 		id string,
-	) (*GetUserResponse, error)
+	) (*domain.GetUserResponse, error)
 
-	// UpdateUser обновляет информацию о пользователе
 	UpdateUser(
 		ctx context.Context,
 		id string,
 		username string,
 		country string,
 		age int32,
-	) (*UpdateUserResponse, error)
+	) (*domain.UpdateUserResponse, error)
 
-	// ChangePassword изменяет пароль пользователя
 	ChangePassword(
 		ctx context.Context,
 		id string,
 		oldPassword string,
 		newPassword string,
-	) (*ChangePasswordResponse, error)
+	) (*domain.ChangePasswordResponse, error)
 }
 
 type serverAPI struct {
