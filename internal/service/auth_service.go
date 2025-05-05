@@ -4,20 +4,26 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"os"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/zhavkk/gRPC_auth_service/internal/domain"
+	"github.com/zhavkk/gRPC_auth_service/internal/lib/jwt"
 	"github.com/zhavkk/gRPC_auth_service/internal/repository/postgres"
 	"golang.org/x/crypto/bcrypt"
 )
 
 type AuthService struct {
 	userRepo postgres.UserRepository
+	log      *slog.Logger
 }
 
-func NewAuthService(userRepo postgres.UserRepository) *AuthService {
+func NewAuthService(userRepo postgres.UserRepository, log *slog.Logger) *AuthService {
 	return &AuthService{
 		userRepo: userRepo,
+		log:      log,
 	}
 }
 
@@ -30,6 +36,11 @@ func (s *AuthService) Register(
 	country string,
 	age int32,
 ) (*domain.RegisterResponse, error) {
+
+	const op = "auth_service.Register"
+
+	log := s.log.With(slog.String("op", op))
+
 	_, err := s.userRepo.GetUserByEmail(ctx, email)
 	if err == nil {
 		return nil, errors.New("user with this email already exists")
@@ -54,7 +65,7 @@ func (s *AuthService) Register(
 	if err := s.userRepo.CreateUser(ctx, user); err != nil {
 		return nil, fmt.Errorf("failed to create user: %w", err)
 	}
-
+	log.Info("user register  successfully")
 	return &domain.RegisterResponse{
 		ID: user.ID,
 	}, nil
@@ -65,6 +76,9 @@ func (s *AuthService) Login(
 	email string,
 	password string,
 ) (*domain.LoginResponse, error) {
+	const op = "auth_service.Login"
+	log := s.log.With(slog.String("op", op))
+
 	user, err := s.userRepo.GetUserByEmail(ctx, email)
 	if err != nil {
 		return nil, errors.New("invalid email or password")
@@ -74,9 +88,18 @@ func (s *AuthService) Login(
 		return nil, errors.New("invalid email or password")
 	}
 
-	// TODO: JWT token
-	token := "dummy-token"
+	ttlStr := os.Getenv("TOKEN_TTL")
+	ttl, err := time.ParseDuration(ttlStr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid TOKEN_TTL: %w", err)
+	}
 
+	token, err := jwt.NewToken(*user, ttl)
+	if err != nil {
+		s.log.Error("failed to generate token")
+		return nil, fmt.Errorf("%s %w", op, err)
+	}
+	log.Info("User logged in")
 	return &domain.LoginResponse{
 		ID:       user.ID,
 		Username: user.Username,
@@ -91,6 +114,9 @@ func (s *AuthService) SetUserRole(
 	id string,
 	role string,
 ) (*domain.SetUserRoleResponse, error) {
+	const op = "auth_service.SetUserRole"
+
+	log := s.log.With(slog.String("op", op))
 	user, err := s.userRepo.GetUserByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -103,7 +129,7 @@ func (s *AuthService) SetUserRole(
 	if err := s.userRepo.UpdateUserRole(ctx, id, role); err != nil {
 		return nil, fmt.Errorf("failed to update user role: %w", err)
 	}
-
+	log.Info("User role was updated")
 	return &domain.SetUserRoleResponse{
 		ID:   user.ID,
 		Role: role,
@@ -114,11 +140,13 @@ func (s *AuthService) GetUser(
 	ctx context.Context,
 	id string,
 ) (*domain.GetUserResponse, error) {
+	const op = "auth_service.GetUser"
+	log := s.log.With(slog.String("op", op))
 	user, err := s.userRepo.GetUserByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-
+	log.Info("user found successfully")
 	return &domain.GetUserResponse{
 		ID:       user.ID,
 		Username: user.Username,
@@ -137,6 +165,8 @@ func (s *AuthService) UpdateUser(
 	country string,
 	age int32,
 ) (*domain.UpdateUserResponse, error) {
+	const op = "auth_service.UpdateUser"
+	log := s.log.With(slog.String("op", op))
 	user, err := s.userRepo.GetUserByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -150,6 +180,7 @@ func (s *AuthService) UpdateUser(
 		return nil, fmt.Errorf("failed to update user: %w", err)
 	}
 
+	log.Info("User was updated")
 	return &domain.UpdateUserResponse{
 		ID:       user.ID,
 		Username: user.Username,
@@ -167,6 +198,9 @@ func (s *AuthService) ChangePassword(
 	oldPassword string,
 	newPassword string,
 ) (*domain.ChangePasswordResponse, error) {
+	const op = "auth_service.ChangePassword"
+
+	log := s.log.With(slog.String("op", op))
 	user, err := s.userRepo.GetUserByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -184,7 +218,7 @@ func (s *AuthService) ChangePassword(
 	if err := s.userRepo.UpdateUserPassword(ctx, id, string(PassHash)); err != nil {
 		return nil, fmt.Errorf("failed to update password: %w", err)
 	}
-
+	log.Info("Pass was changed")
 	return &domain.ChangePasswordResponse{
 		Success: true,
 	}, nil

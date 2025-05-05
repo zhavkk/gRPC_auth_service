@@ -4,8 +4,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 
 	"github.com/zhavkk/gRPC_auth_service/internal/grpc/auth"
+	"github.com/zhavkk/gRPC_auth_service/internal/grpc/interceptors"
 	"google.golang.org/grpc"
 )
 
@@ -16,7 +18,16 @@ type App struct {
 }
 
 func New(log *slog.Logger, port int) *App {
-	gRPCServer := grpc.NewServer()
+	authInterceptor := interceptors.NewAuthInterceptor(os.Getenv("SECRET"))
+	loggingInterceptor := interceptors.NewLoggingInterceptor(log)
+
+	gRPCServer := grpc.NewServer(
+		grpc.ChainUnaryInterceptor(
+			loggingInterceptor,
+			authInterceptor,
+		),
+	)
+
 	var service auth.AuthService
 	auth.Register(gRPCServer, service)
 
