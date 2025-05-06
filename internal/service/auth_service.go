@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/zhavkk/gRPC_auth_service/internal/domain"
@@ -16,14 +14,16 @@ import (
 )
 
 type AuthService struct {
-	userRepo postgres.UserRepository
-	log      *slog.Logger
+	userRepo  postgres.UserRepository
+	log       *slog.Logger
+	jwtConfig jwt.Config
 }
 
-func NewAuthService(userRepo postgres.UserRepository, log *slog.Logger) *AuthService {
+func NewAuthService(userRepo postgres.UserRepository, log *slog.Logger, jwtConfig jwt.Config) *AuthService {
 	return &AuthService{
-		userRepo: userRepo,
-		log:      log,
+		userRepo:  userRepo,
+		log:       log,
+		jwtConfig: jwtConfig,
 	}
 }
 
@@ -88,13 +88,7 @@ func (s *AuthService) Login(
 		return nil, errors.New("invalid email or password")
 	}
 
-	ttlStr := os.Getenv("TOKEN_TTL")
-	ttl, err := time.ParseDuration(ttlStr)
-	if err != nil {
-		return nil, fmt.Errorf("invalid TOKEN_TTL: %w", err)
-	}
-
-	token, err := jwt.NewToken(*user, ttl)
+	token, err := jwt.NewToken(*user, s.jwtConfig)
 	if err != nil {
 		s.log.Error("failed to generate token")
 		return nil, fmt.Errorf("%s %w", op, err)

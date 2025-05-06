@@ -11,11 +11,11 @@ import (
 )
 
 type AuthInterceptor struct {
-	secret string
+	jwtConfig jwt.Config
 }
 
-func NewAuthInterceptor(secret string) grpc.UnaryServerInterceptor {
-	return (&AuthInterceptor{secret: secret}).Unary
+func NewAuthInterceptor(jwtConfig jwt.Config) grpc.UnaryServerInterceptor {
+	return (&AuthInterceptor{jwtConfig: jwtConfig}).Unary
 }
 
 func (i *AuthInterceptor) Unary(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
@@ -35,7 +35,7 @@ func (i *AuthInterceptor) Unary(ctx context.Context, req interface{}, info *grpc
 	}
 	tokenString = tokenString[7:]
 
-	claims, err := jwt.ValidateToken(tokenString, i.secret)
+	claims, err := jwt.ValidateToken(tokenString, i.jwtConfig)
 	if err != nil {
 		return nil, status.Error(codes.Unauthenticated, err.Error())
 	}

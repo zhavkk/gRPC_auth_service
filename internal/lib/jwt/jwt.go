@@ -2,7 +2,6 @@ package jwt
 
 import (
 	"errors"
-	"os"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -16,38 +15,37 @@ const (
 	ClaimRole  = "role"
 )
 
+type Config struct {
+	Secret   string
+	TokenTTL time.Duration
+}
+
 // TODO: unit test
-func NewToken(user domain.User, duration time.Duration) (string, error) {
+func NewToken(user domain.User, config Config) (string, error) {
 	claims := jwt.MapClaims{
 		ClaimUUID:  user.ID,
 		ClaimEmail: user.Email,
-		ClaimExp:   time.Now().Add(duration).Unix(),
+		ClaimExp:   time.Now().Add(config.TokenTTL).Unix(),
 		ClaimRole:  user.Role,
 	}
+
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-
-	secret := os.Getenv("SECRET")
-	if secret == "" {
-		return "", errors.New("secret is not set")
-	}
-	tokenString, err := token.SignedString([]byte(secret))
-
+	tokenString, err := token.SignedString([]byte(config.Secret))
 	if err != nil {
 		return "", err
 	}
 
 	return tokenString, nil
-
 }
 
-func ValidateToken(tokenString string, secret string) (jwt.MapClaims, error) {
+func ValidateToken(tokenString string, config Config) (jwt.MapClaims, error) {
 	token, err := jwt.Parse(
 		tokenString,
 		func(token *jwt.Token) (interface{}, error) {
 			if token.Method != jwt.SigningMethodHS256 {
 				return nil, errors.New("unexpected signing method")
 			}
-			return []byte(secret), nil
+			return []byte(config.Secret), nil
 		},
 	)
 	if err != nil {
@@ -63,6 +61,7 @@ func ValidateToken(tokenString string, secret string) (jwt.MapClaims, error) {
 		return nil, errors.New("invalid token claims")
 	}
 
+	// Проверяем expiration
 	exp, ok := claims[ClaimExp].(float64)
 	if !ok {
 		return nil, errors.New("invalid expiration time")

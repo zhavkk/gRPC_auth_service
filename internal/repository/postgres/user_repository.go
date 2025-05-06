@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/zhavkk/gRPC_auth_service/internal/domain"
+	"github.com/zhavkk/gRPC_auth_service/internal/storage"
 )
 
 type UserRepository interface {
@@ -20,14 +20,14 @@ type UserRepository interface {
 }
 
 type UserRepositiryPostgres struct {
-	db  *pgxpool.Pool
-	log *slog.Logger
+	storage *storage.Storage
+	log     *slog.Logger
 }
 
-func NewUserRepository(db *pgxpool.Pool, log *slog.Logger) *UserRepositiryPostgres {
+func NewUserRepository(storage *storage.Storage, log *slog.Logger) *UserRepositiryPostgres {
 	return &UserRepositiryPostgres{
-		db:  db,
-		log: log,
+		storage: storage,
+		log:     log,
 	}
 }
 
@@ -37,7 +37,7 @@ func (r *UserRepositiryPostgres) CreateUser(ctx context.Context, user *domain.Us
 	INSERT INTO users (id, username, email, pass_hash, gender, country, age, role)
 	VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 	`
-	_, err := r.db.Exec(ctx, query,
+	_, err := r.storage.GetPool().Exec(ctx, query,
 		user.ID,
 		user.Username,
 		user.Email,
@@ -66,7 +66,7 @@ func (r *UserRepositiryPostgres) GetUserByID(ctx context.Context, id string) (*d
 
 	user := &domain.User{}
 
-	err := r.db.QueryRow(ctx, query, id).Scan(
+	err := r.storage.GetPool().QueryRow(ctx, query, id).Scan(
 		&user.ID,
 		&user.Username,
 		&user.Email,
@@ -99,7 +99,7 @@ func (r *UserRepositiryPostgres) GetUserByEmail(ctx context.Context, email strin
 
 	user := &domain.User{}
 
-	err := r.db.QueryRow(ctx, query, email).Scan(
+	err := r.storage.GetPool().QueryRow(ctx, query, email).Scan(
 		&user.ID,
 		&user.Username,
 		&user.Email,
@@ -130,7 +130,7 @@ func (r *UserRepositiryPostgres) UpdateUser(ctx context.Context, user *domain.Us
 	WHERE id = $6
 	`
 
-	_, err := r.db.Exec(ctx, query,
+	_, err := r.storage.GetPool().Exec(ctx, query,
 		user.Username,
 		user.Email,
 		user.Gender,
@@ -155,7 +155,7 @@ func (r *UserRepositiryPostgres) UpdateUserRole(ctx context.Context, id string, 
 	WHERE id = $2
 	`
 
-	_, err := r.db.Exec(ctx, query, role, id)
+	_, err := r.storage.GetPool().Exec(ctx, query, role, id)
 	if err != nil {
 		r.log.Error("Failed to update user role", "error", err)
 		return fmt.Errorf("failed to update user role: %w", err)
@@ -173,7 +173,7 @@ func (r *UserRepositiryPostgres) UpdateUserPassword(ctx context.Context, id stri
 	WHERE id = $2
 	`
 
-	_, err := r.db.Exec(ctx, query, hashedPassword, id)
+	_, err := r.storage.GetPool().Exec(ctx, query, hashedPassword, id)
 	if err != nil {
 		r.log.Error("Failed to update user password", "error", err)
 		return fmt.Errorf("failed to update user password: %w", err)

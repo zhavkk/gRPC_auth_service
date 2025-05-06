@@ -5,9 +5,11 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"time"
 
 	"github.com/zhavkk/gRPC_auth_service/internal/grpc/auth"
 	"github.com/zhavkk/gRPC_auth_service/internal/grpc/interceptors"
+	"github.com/zhavkk/gRPC_auth_service/internal/lib/jwt"
 	"google.golang.org/grpc"
 )
 
@@ -18,7 +20,12 @@ type App struct {
 }
 
 func New(log *slog.Logger, port int) *App {
-	authInterceptor := interceptors.NewAuthInterceptor(os.Getenv("SECRET"))
+	jwtConfig := jwt.Config{
+		Secret:   os.Getenv("JWT_SECRET"),
+		TokenTTL: 1 * time.Hour,
+	}
+
+	authInterceptor := interceptors.NewAuthInterceptor(jwtConfig)
 	loggingInterceptor := interceptors.NewLoggingInterceptor(log)
 
 	gRPCServer := grpc.NewServer(
