@@ -119,7 +119,7 @@ func TestValidateToken(t *testing.T) {
 		if token == "" {
 			t.Fatalf("expected non-empty token")
 		}
-		time.Sleep(2 * time.Second) // Ждем чуть больше TTL
+		time.Sleep(2 * time.Second)
 		claims, err := ValidateToken(token, config)
 		if err == nil {
 			t.Fatalf("expected error, got nil")

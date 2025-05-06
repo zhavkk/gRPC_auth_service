@@ -250,3 +250,96 @@ func TestAuthService_SetUserRole(t *testing.T) {
 		assert.Contains(t, err.Error(), "failed to update user role")
 	})
 }
+
+func TestAuthService_GetUser(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockRepo := mocks.NewMockUserRepository(ctrl)
+
+	config := jwt.Config{
+		Secret:   "secret",
+		TokenTTL: 1 * time.Second,
+	}
+
+	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	authService := NewAuthService(mockRepo, log, config)
+
+	user := &domain.User{
+		ID:       "user-id",
+		Username: "test",
+		Email:    "test@test.com",
+		Role:     "user",
+	}
+	t.Run("success", func(t *testing.T) {
+		mockRepo.EXPECT().
+			GetUserByID(gomock.Any(), "user-id").
+			Return(user, nil)
+
+		resp, err := authService.GetUser(context.Background(), "user-id")
+		assert.NoError(t, err)
+		assert.Equal(t, user.ID, resp.ID)
+		assert.Equal(t, user.Username, resp.Username)
+		assert.Equal(t, user.Email, resp.Email)
+		assert.Equal(t, user.Role, resp.Role)
+	})
+
+	t.Run("user not found", func(t *testing.T) {
+		mockRepo.EXPECT().
+			GetUserByID(gomock.Any(), "not-exist").
+			Return(nil, errors.New("user not found"))
+
+		_, err := authService.GetUser(context.Background(), "not-exist")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "user not found")
+	})
+}
+
+func TestAuthService_UpdateUser(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockRepo := mocks.NewMockUserRepository(ctrl)
+
+	config := jwt.Config{
+		Secret:   "secret",
+		TokenTTL: 1 * time.Second,
+	}
+
+	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	authService := NewAuthService(mockRepo, log, config)
+
+	user := &domain.User{
+		ID:       "111",
+		Username: "test",
+		Email:    "test@test.com",
+		Role:     "user",
+	}
+
+	t.Run("success", func(t *testing.T) {
+		mockRepo.EXPECT().
+			GetUserByID(gomock.Any(), "111").
+			Return(user, nil)
+
+		mockRepo.EXPECT().
+			UpdateUser(gomock.Any(), gomock.Any()).
+			Return(nil)
+
+		_, err := authService.UpdateUser(context.Background(), user.ID, "new-username", "new-email", int32(20))
+
+		assert.NoError(t, err)
+		assert.Equal(t, "new-username", user.Username)
+	})
+
+	t.Run("user not found", func(t *testing.T) {
+		mockRepo.EXPECT().
+			GetUserByID(gomock.Any(), "not-exist").
+			Return(nil, errors.New("user not found"))
+
+		_, err := authService.UpdateUser(context.Background(), "not-exist", "new-username", "new-email", int32(20))
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "user not found")
+	})
+}
