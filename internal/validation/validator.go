@@ -49,7 +49,7 @@ func ValidatePassword(password string) error {
 }
 
 func ValidateAge(age int32) error {
-	if age < 0 || age > 150 {
+	if age <= 0 || age > 150 {
 		return ErrInvalidAge
 	}
 	return nil

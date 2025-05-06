@@ -24,7 +24,6 @@ func TestNewToken(t *testing.T) {
 			t.Fatalf("expected non-empty token")
 		}
 
-		// Проверяем, что токен валиден и содержит нужные claims
 		claims, err := ValidateToken(token, config)
 		if err != nil {
 			t.Fatalf("token should be valid, got error: %v", err)
