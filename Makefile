@@ -12,6 +12,12 @@ migrate-up:
 migrate-down:
 	goose -dir $(MIGRATIONS_DIR) postgres "$(DB_URL)" down
 
+
+.PHONY: migrate-test
+migrate-test:
+	@goose -dir ./migrations postgres "postgres://testuser:testpass@localhost:5433/testdb?sslmode=disable" up
+
+	
 # Сборка
 .PHONY: build
 build:
