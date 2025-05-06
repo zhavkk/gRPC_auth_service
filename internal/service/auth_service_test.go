@@ -48,7 +48,7 @@ func TestAuthService_Register(t *testing.T) {
 				return nil
 			})
 
-		response, err := authService.Register(context.Background(), "test", "test@test.com", "password123", true, "Russia", 20)
+		response, err := authService.Register(context.Background(), "test", "test@test.com", "password123", true, "Russia", 20, "user")
 		assert.NoError(t, err)
 		assert.NotEmpty(t, response.ID)
 	})
@@ -63,7 +63,7 @@ func TestAuthService_Register(t *testing.T) {
 			GetUserByEmail(gomock.Any(), "test@test.com").
 			Return(existingUser, nil)
 
-		_, err := authService.Register(context.Background(), "test2", "test@test.com", "password123", true, "Russia", 20)
+		_, err := authService.Register(context.Background(), "test2", "test@test.com", "password123", true, "Russia", 20, "user")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "user with this email already exists")
 	})
@@ -128,6 +128,7 @@ func TestAuthService_Login(t *testing.T) {
 		assert.Contains(t, err.Error(), "invalid email or password")
 	})
 }
+
 func TestAuthService_ChangePassword(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -236,6 +237,26 @@ func TestAuthService_SetUserRole(t *testing.T) {
 		assert.Contains(t, err.Error(), "user not found")
 	})
 
+	t.Run("invalid role", func(t *testing.T) {
+		mockRepo.EXPECT().
+			GetUserByID(gomock.Any(), "user-id").
+			Return(user, nil)
+
+		_, err := authService.SetUserRole(context.Background(), "user-id", "invalid-role")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid role")
+	})
+
+	t.Run("empty role", func(t *testing.T) {
+		mockRepo.EXPECT().
+			GetUserByID(gomock.Any(), "user-id").
+			Return(user, nil)
+
+		_, err := authService.SetUserRole(context.Background(), "user-id", "")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid role")
+	})
+
 	t.Run("update error", func(t *testing.T) {
 		mockRepo.EXPECT().
 			GetUserByID(gomock.Any(), "user-id").
@@ -272,6 +293,7 @@ func TestAuthService_GetUser(t *testing.T) {
 		Email:    "test@test.com",
 		Role:     "user",
 	}
+
 	t.Run("success", func(t *testing.T) {
 		mockRepo.EXPECT().
 			GetUserByID(gomock.Any(), "user-id").
@@ -293,6 +315,26 @@ func TestAuthService_GetUser(t *testing.T) {
 		_, err := authService.GetUser(context.Background(), "not-exist")
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "user not found")
+	})
+
+	t.Run("empty user ID", func(t *testing.T) {
+		mockRepo.EXPECT().
+			GetUserByID(gomock.Any(), "").
+			Return(nil, errors.New("user ID cannot be empty"))
+
+		_, err := authService.GetUser(context.Background(), "")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "user ID cannot be empty")
+	})
+
+	t.Run("invalid user ID format", func(t *testing.T) {
+		mockRepo.EXPECT().
+			GetUserByID(gomock.Any(), "invalid-id-format").
+			Return(nil, errors.New("invalid user ID format"))
+
+		_, err := authService.GetUser(context.Background(), "invalid-id-format")
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid user ID format")
 	})
 }
 
@@ -327,8 +369,7 @@ func TestAuthService_UpdateUser(t *testing.T) {
 			UpdateUser(gomock.Any(), gomock.Any()).
 			Return(nil)
 
-		_, err := authService.UpdateUser(context.Background(), user.ID, "new-username", "new-email", int32(20))
-
+		_, err := authService.UpdateUser(context.Background(), user.ID, "new-username", "new-country", int32(20))
 		assert.NoError(t, err)
 		assert.Equal(t, "new-username", user.Username)
 	})
@@ -338,7 +379,7 @@ func TestAuthService_UpdateUser(t *testing.T) {
 			GetUserByID(gomock.Any(), "not-exist").
 			Return(nil, errors.New("user not found"))
 
-		_, err := authService.UpdateUser(context.Background(), "not-exist", "new-username", "new-email", int32(20))
+		_, err := authService.UpdateUser(context.Background(), "not-exist", "new-username", "new-country", int32(20))
 		assert.Error(t, err)
 		assert.Contains(t, err.Error(), "user not found")
 	})

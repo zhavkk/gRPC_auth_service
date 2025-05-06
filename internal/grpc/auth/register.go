@@ -21,6 +21,7 @@ func (s *serverAPI) Register(ctx context.Context, req *authproto.RegisterRequest
 		req.GetGender(),
 		req.GetCountry(),
 		req.GetAge(),
+		req.GetRole(),
 	)
 
 	if err != nil {

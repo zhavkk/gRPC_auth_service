@@ -2,6 +2,7 @@ package validation
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/zhavkk/Auth-protobuf/gen/go/auth"
 )
@@ -17,6 +18,9 @@ func ValidateRegisterRequest(req *auth.RegisterRequest) error {
 		return err
 	}
 	if err := ValidateAge(req.GetAge()); err != nil {
+		return err
+	}
+	if err := ValidateRegistrationRole(req.GetRole()); err != nil {
 		return err
 	}
 	return nil
@@ -75,6 +79,21 @@ func ValidateChangePasswordRequest(req *auth.ChangePasswordRequest) error {
 	}
 	if err := ValidatePassword(req.GetNewPassword()); err != nil {
 		return err
+	}
+	return nil
+}
+
+// for registration
+func ValidateRegistrationRole(role string) error {
+	if role == "" {
+		return errors.New("role is required")
+	}
+	validRoles := map[string]bool{
+		"user":   true,
+		"artist": true,
+	}
+	if !validRoles[strings.ToLower(role)] {
+		return errors.New("role must be either 'user' or 'artist'")
 	}
 	return nil
 }

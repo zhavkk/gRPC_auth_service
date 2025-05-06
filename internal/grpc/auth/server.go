@@ -18,6 +18,7 @@ type AuthService interface {
 		gender bool,
 		country string,
 		age int32,
+		role string,
 	) (*domain.RegisterResponse, error)
 
 	Login(

@@ -35,6 +35,7 @@ func (s *AuthService) Register(
 	gender bool,
 	country string,
 	age int32,
+	role string,
 ) (*domain.RegisterResponse, error) {
 
 	const op = "auth_service.Register"
@@ -59,7 +60,7 @@ func (s *AuthService) Register(
 		Gender:   gender,
 		Country:  country,
 		Age:      age,
-		Role:     "user",
+		Role:     role,
 	}
 
 	if err := s.userRepo.CreateUser(ctx, user); err != nil {
@@ -113,7 +114,10 @@ func (s *AuthService) SetUserRole(
 	log := s.log.With(slog.String("op", op))
 	user, err := s.userRepo.GetUserByID(ctx, id)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, domain.ErrUserNotFound) {
+			return nil, fmt.Errorf("user not found")
+		}
+		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
 	if !isValidRole(role) {

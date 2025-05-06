@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -77,9 +78,8 @@ func (r *UserRepositiryPostgres) GetUserByID(ctx context.Context, id string) (*d
 		&user.Role,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			r.log.Warn("User not found: ", "id", id)
-			return nil, fmt.Errorf("user not found")
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrUserNotFound
 		}
 		r.log.Error("Failed to get user: ", "err", err)
 		return nil, fmt.Errorf("failed to get user: %w", err)
@@ -110,9 +110,8 @@ func (r *UserRepositiryPostgres) GetUserByEmail(ctx context.Context, email strin
 		&user.Role,
 	)
 	if err != nil {
-		if err == sql.ErrNoRows {
-			r.log.Warn("User not found", "email", email)
-			return nil, fmt.Errorf("user not found")
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, domain.ErrUserNotFound
 		}
 		r.log.Error("Failed to get user", "error", err)
 		return nil, fmt.Errorf("failed to get user: %w", err)
