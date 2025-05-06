@@ -42,7 +42,6 @@ func (s *serverAPI) ChangePassword(ctx context.Context, req *authproto.ChangePas
 		return nil, status.Error(codes.Unauthenticated, "invalid token claims")
 	}
 
-	// Проверяем, что пользователь меняет свой пароль
 	if req.Id != userIDFromToken {
 		return nil, status.Error(codes.PermissionDenied, "you can only change your own password")
 	}

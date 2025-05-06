@@ -7,7 +7,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/zhavkk/gRPC_auth_service/internal/grpc/auth"
 	"github.com/zhavkk/gRPC_auth_service/internal/grpc/interceptors"
 	"github.com/zhavkk/gRPC_auth_service/internal/lib/jwt"
 	"google.golang.org/grpc"
@@ -34,9 +33,6 @@ func New(log *slog.Logger, port int) *App {
 			authInterceptor,
 		),
 	)
-
-	var service auth.AuthService
-	auth.Register(gRPCServer, service)
 
 	return &App{
 		log:        log,
@@ -77,4 +73,8 @@ func (a *App) Stop() {
 
 	a.gRPCServer.GracefulStop()
 
+}
+
+func (a *App) GetServer() *grpc.Server {
+	return a.gRPCServer
 }

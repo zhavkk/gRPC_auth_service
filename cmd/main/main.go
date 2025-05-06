@@ -31,8 +31,7 @@ func main() {
 
 	log.Info("starting app", slog.Any("env", cfg))
 	//TODO: application
-	dsn := "postgres://username:password@host:port/dbname?sslmode=disable" // temp
-	application := app.New(log, cfg.GRPC.Port, dsn, cfg.TokenTTL)
+	application := app.New(log, cfg.GRPC.Port, cfg.TokenTTL)
 
 	//TODO: run gRPC
 	go func() {
