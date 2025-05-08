@@ -3,20 +3,21 @@ package postgres
 import (
 	"context"
 	"log/slog"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/assert"
+
 	"github.com/zhavkk/gRPC_auth_service/internal/config"
-	"github.com/zhavkk/gRPC_auth_service/internal/domain"
+	"github.com/zhavkk/gRPC_auth_service/internal/logger"
+	"github.com/zhavkk/gRPC_auth_service/internal/models"
 	"github.com/zhavkk/gRPC_auth_service/internal/storage"
 )
 
 func setupTestDB(t *testing.T) *pgxpool.Pool {
-	dsn := "postgres://testuser:testpass@localhost:5433/testdb?sslmode=disable"
+	dsn := "postgres://testuser:testpass@localhost:5432/testdb?sslmode=disable"
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -34,29 +35,24 @@ func setupTestDB(t *testing.T) *pgxpool.Pool {
 }
 
 func TestUserRepository_Postgres(t *testing.T) {
+	logger.Log = slog.Default()
 	db := setupTestDB(t)
 	defer db.Close()
 
 	cfg := config.Config{
-		DB: config.DB{
-			Host:     "localhost",
-			Port:     "5433",
-			User:     "testuser",
-			Password: "testpass",
-			Name:     "testdb",
-		},
+
+		DBURL: "postgres://testuser:testpass@localhost:5432/testdb?sslmode=disable",
 	}
 
 	storage, err := storage.NewStorage(context.Background(), &cfg)
 	if err != nil {
 		t.Fatalf("failed to create storage: %v", err)
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	repo := NewUserRepository(storage, logger)
+	repo := NewUserRepository(storage)
 
 	ctx := context.Background()
 
-	user := &domain.User{
+	user := &models.User{
 		ID:       uuid.New().String(),
 		Username: "testuser",
 		Email:    "test@example.com",

@@ -4,9 +4,10 @@ import (
 	"context"
 
 	authproto "github.com/zhavkk/Auth-protobuf/gen/go/auth"
-	"github.com/zhavkk/gRPC_auth_service/internal/domain"
-	"github.com/zhavkk/gRPC_auth_service/internal/validation"
 	"google.golang.org/grpc"
+
+	"github.com/zhavkk/gRPC_auth_service/internal/models"
+	"github.com/zhavkk/gRPC_auth_service/internal/validation"
 )
 
 type AuthService interface {
@@ -19,24 +20,24 @@ type AuthService interface {
 		country string,
 		age int32,
 		role string,
-	) (*domain.RegisterResponse, error)
+	) (*models.RegisterResponse, error)
 
 	Login(
 		ctx context.Context,
 		email string,
 		password string,
-	) (*domain.LoginResponse, error)
+	) (*models.LoginResponse, error)
 
 	SetUserRole(
 		ctx context.Context,
 		id string,
 		role string,
-	) (*domain.SetUserRoleResponse, error)
+	) (*models.SetUserRoleResponse, error)
 
 	GetUser(
 		ctx context.Context,
 		id string,
-	) (*domain.GetUserResponse, error)
+	) (*models.GetUserResponse, error)
 
 	UpdateUser(
 		ctx context.Context,
@@ -44,14 +45,14 @@ type AuthService interface {
 		username string,
 		country string,
 		age int32,
-	) (*domain.UpdateUserResponse, error)
+	) (*models.UpdateUserResponse, error)
 
 	ChangePassword(
 		ctx context.Context,
 		id string,
 		oldPassword string,
 		newPassword string,
-	) (*domain.ChangePasswordResponse, error)
+	) (*models.ChangePasswordResponse, error)
 }
 
 type serverAPI struct {
@@ -60,7 +61,9 @@ type serverAPI struct {
 	service   AuthService
 }
 
-func Register(gRPC *grpc.Server, service AuthService) { // register handler
+func Register(gRPC *grpc.Server,
+	service AuthService,
+) {
 	authproto.RegisterAuthServer(gRPC, &serverAPI{
 		validator: validation.NewValidator(),
 		service:   service,

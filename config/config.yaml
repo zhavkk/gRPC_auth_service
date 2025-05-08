@@ -1,12 +1,7 @@
 env: local
 
-db:
-  host: postgres
-  port: 5432
-  user: testuser
-  password: testpass
-  name: testdb
-
+db_url: postgres://testuser:testpass@localhost:5433/testdb?sslmode=disable
+  
 token_ttl: 1h
 
 grpc_server:

@@ -1,3 +1,4 @@
+// Package config предоставляет функциональность для загрузки и валидации cfg
 package config
 
 import (
@@ -9,19 +10,12 @@ import (
 )
 
 type Config struct {
-	Env      string `yaml:"env" env-default:"local" env-required:"true"`
-	DB       `yaml:"database"`
+	Env      string        `yaml:"env" env-default:"local" env-required:"true"`
 	TokenTTL time.Duration `yaml:"token_ttl" env-required:"true"`
 	GRPC     GRPCConfig    `yaml:"grpc_server"`
+	DBURL    string        `yaml:"db_url" env-required:"true"`
 }
 
-type DB struct {
-	Host     string `yaml:"host" env:"DB_HOST" env-default:"localhost"`
-	Port     string `yaml:"port" env:"DB_PORT" env-default:"5432"`
-	User     string `yaml:"user" env:"DB_USER" env-required:"true"`
-	Password string `yaml:"password" env:"DB_PASSWORD" env-required:"true"`
-	Name     string `yaml:"name" env:"DB_NAME" env-required:"true"`
-}
 type GRPCConfig struct {
 	Port    int           `yaml:"port"`
 	Timeout time.Duration `yaml:"timeout"`

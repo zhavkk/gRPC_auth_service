@@ -9,7 +9,9 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func (s *serverAPI) SetUserRole(ctx context.Context, req *authproto.SetUserRoleRequest) (*authproto.SetUserRoleResponse, error) {
+func (s *serverAPI) SetUserRole(ctx context.Context,
+	req *authproto.SetUserRoleRequest,
+) (*authproto.SetUserRoleResponse, error) {
 	if err := s.validator.ValidateSetUserRoleRequest(req); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -35,20 +37,19 @@ func (s *serverAPI) SetUserRole(ctx context.Context, req *authproto.SetUserRoleR
 	}, nil
 }
 
-func (s *serverAPI) UpdateUser(ctx context.Context, req *authproto.UpdateUserRequest) (*authproto.UpdateUserResponse, error) {
+func (s *serverAPI) UpdateUser(ctx context.Context,
+	req *authproto.UpdateUserRequest,
+) (*authproto.UpdateUserResponse, error) {
 	if err := s.validator.ValidateUpdateUserRequest(req); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	claims, ok := ctx.Value("claims").(jwt.MapClaims)
-	if !ok {
-		return nil, status.Error(codes.Unauthenticated, "invalid token")
+	userID, err := GetUserIDFromContext(ctx)
+	if err != nil {
+		return nil, err
 	}
 
-	userID := claims["uuid"].(string)
-	role := claims["role"].(string)
-
-	if userID != req.GetId() && role != "admin" {
+	if userID != req.GetId() {
 		return nil, status.Error(codes.PermissionDenied, "you can only update your own profile")
 	}
 

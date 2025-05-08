@@ -25,31 +25,6 @@ services:
     networks:
       - testnet
 
-  auth_service:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-    env_file:
-      - .env
-    networks:
-      - testnet
-    ports:
-      - "50051:50051"
-
-  e2e:
-    build:
-      context: .
-      dockerfile: test/e2e/Dockerfile
-
-    environment:
-      - GRPC_HOST=auth_service:50051
-    networks:
-      - testnet
-    command: ["go", "test", "-v", "./test/e2e"]
-
 volumes:
   pgdata:
 

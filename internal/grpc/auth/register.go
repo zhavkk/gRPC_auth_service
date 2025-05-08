@@ -3,13 +3,14 @@ package auth
 import (
 	"context"
 
-	"github.com/golang-jwt/jwt/v5"
 	authproto "github.com/zhavkk/Auth-protobuf/gen/go/auth"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-func (s *serverAPI) Register(ctx context.Context, req *authproto.RegisterRequest) (*authproto.RegisterResponse, error) {
+func (s *serverAPI) Register(ctx context.Context,
+	req *authproto.RegisterRequest,
+) (*authproto.RegisterResponse, error) {
 	if err := s.validator.ValidateRegisterRequest(req); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
@@ -33,17 +34,17 @@ func (s *serverAPI) Register(ctx context.Context, req *authproto.RegisterRequest
 	}, nil
 }
 
-func (s *serverAPI) GetUser(ctx context.Context, req *authproto.GetUserRequest) (*authproto.GetUserResponse, error) {
+func (s *serverAPI) GetUser(ctx context.Context,
+	req *authproto.GetUserRequest,
+) (*authproto.GetUserResponse, error) {
 	if err := s.validator.ValidateGetUserRequest(req); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
-	claims, ok := ctx.Value("claims").(jwt.MapClaims)
-	if !ok {
-		return nil, status.Error(codes.Unauthenticated, "invalid token")
+	userID, err := GetUserIDFromContext(ctx)
+	if err != nil {
+		return nil, err
 	}
-
-	userID := claims["uuid"].(string)
 
 	if userID != req.GetId() {
 		return nil, status.Error(codes.PermissionDenied, "you can only access your own profile")

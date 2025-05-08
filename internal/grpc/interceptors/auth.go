@@ -1,14 +1,16 @@
+// Package interceptors содержит middleware для gRPC-сервера, включая аутентификацию и логирование.
 package interceptors
 
 import (
 	"context"
 	"strings"
 
-	"github.com/zhavkk/gRPC_auth_service/internal/lib/jwt"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+
+	"github.com/zhavkk/gRPC_auth_service/internal/pkg/jwt"
 )
 
 type AuthInterceptor struct {
@@ -24,34 +26,48 @@ var publicMethods = map[string]bool{
 	"/auth.Auth/Login":    true,
 }
 
-func (i *AuthInterceptor) Unary(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+type contextKey string
+
+const claimsKey contextKey = "claims"
+
+var (
+	ErrInvalidToken              = status.Error(codes.Unauthenticated, "invalid token")
+	ErrInvalidTokenFormat        = status.Error(codes.Unauthenticated, "invalid token format")
+	ErrInvalidTokenHeader        = status.Error(codes.Unauthenticated, "invalid token header")
+	ErrInvalidTokenMetadata      = status.Error(codes.Unauthenticated, "invalid token metadata")
+	ErrInvalidTokenAuthorization = status.Error(codes.Unauthenticated, "authorization token is not provided")
+)
+
+func (i *AuthInterceptor) Unary(ctx context.Context,
+	req interface{},
+	info *grpc.UnaryServerInfo,
+	handler grpc.UnaryHandler,
+) (interface{}, error) {
 	if publicMethods[info.FullMethod] {
 		return handler(ctx, req)
 	}
 
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
-		return nil, status.Error(codes.Unauthenticated, "metadata is not provided")
+		return nil, ErrInvalidTokenMetadata
 	}
 
 	authHeader := md.Get("authorization")
 	if len(authHeader) == 0 {
-		return nil, status.Error(codes.Unauthenticated, "authorization token is not provided")
+		return nil, ErrInvalidTokenAuthorization
 	}
 
 	tokenString := authHeader[0]
 	if !strings.HasPrefix(tokenString, "Bearer ") {
-		return nil, status.Error(codes.Unauthenticated, "invalid token format")
+		return nil, ErrInvalidTokenFormat
 	}
 
 	tokenString = strings.TrimPrefix(tokenString, "Bearer ")
 
 	claims, err := jwt.ValidateToken(tokenString, i.jwtConfig)
 	if err != nil {
-		return nil, status.Error(codes.Unauthenticated, err.Error())
+		return nil, ErrInvalidToken
 	}
-
-	ctx = context.WithValue(ctx, "claims", claims)
-
+	ctx = context.WithValue(ctx, claimsKey, claims)
 	return handler(ctx, req)
 }

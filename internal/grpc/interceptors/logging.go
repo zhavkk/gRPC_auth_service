@@ -2,24 +2,28 @@ package interceptors
 
 import (
 	"context"
-	"log/slog"
 	"time"
 
 	"google.golang.org/grpc"
+
+	"github.com/zhavkk/gRPC_auth_service/internal/logger"
 )
 
 type LoggingInterceptor struct {
-	log *slog.Logger
 }
 
-func NewLoggingInterceptor(log *slog.Logger) grpc.UnaryServerInterceptor {
-	return (&LoggingInterceptor{log: log}).Unary
+func NewLoggingInterceptor() grpc.UnaryServerInterceptor {
+	return (&LoggingInterceptor{}).Unary
 }
 
-func (i *LoggingInterceptor) Unary(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+func (i *LoggingInterceptor) Unary(ctx context.Context,
+	req interface{},
+	info *grpc.UnaryServerInfo,
+	handler grpc.UnaryHandler,
+) (interface{}, error) {
 	start := time.Now()
 
-	i.log.Debug("starting to handle request",
+	logger.Log.Debug("starting to handle request",
 		"method", info.FullMethod,
 		"request", req,
 	)
@@ -28,13 +32,13 @@ func (i *LoggingInterceptor) Unary(ctx context.Context, req interface{}, info *g
 
 	duration := time.Since(start)
 	if err != nil {
-		i.log.Error("request failed",
+		logger.Log.Error("request failed",
 			"method", info.FullMethod,
 			"duration", duration,
 			"error", err,
 		)
 	} else {
-		i.log.Debug("request completed",
+		logger.Log.Debug("request completed",
 			"method", info.FullMethod,
 			"duration", duration,
 			"response", resp,

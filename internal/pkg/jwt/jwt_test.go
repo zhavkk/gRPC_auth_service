@@ -4,14 +4,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/zhavkk/gRPC_auth_service/internal/domain"
+	"github.com/zhavkk/gRPC_auth_service/internal/models"
 )
 
 func TestNewToken(t *testing.T) {
 	config := Config{Secret: "secret", TokenTTL: 1 * time.Second}
 
 	t.Run("success", func(t *testing.T) {
-		user := domain.User{
+		user := models.User{
 			ID:    "1",
 			Email: "test@test.com",
 			Role:  "user",
@@ -40,7 +40,7 @@ func TestNewToken(t *testing.T) {
 	})
 
 	t.Run("empty id", func(t *testing.T) {
-		user := domain.User{
+		user := models.User{
 			ID:    "",
 			Email: "test@test.com",
 			Role:  "user",
@@ -66,7 +66,7 @@ func TestValidateToken(t *testing.T) {
 	config := Config{Secret: "secret", TokenTTL: 1 * time.Second}
 
 	t.Run("success", func(t *testing.T) {
-		user := domain.User{
+		user := models.User{
 			ID:    "1",
 			Email: "test@test.com",
 			Role:  "user",
@@ -106,7 +106,7 @@ func TestValidateToken(t *testing.T) {
 	})
 
 	t.Run("expired token", func(t *testing.T) {
-		user := domain.User{
+		user := models.User{
 			ID:    "1",
 			Email: "test@test.com",
 			Role:  "user",

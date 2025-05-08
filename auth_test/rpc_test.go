@@ -1,10 +1,10 @@
+// Package auth_test provides tests for the auth service.
 package auth_test
 
 import (
 	"context"
 	"log/slog"
 	"net"
-	"os"
 	"testing"
 	"time"
 
@@ -18,9 +18,11 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	authproto "github.com/zhavkk/Auth-protobuf/gen/go/auth"
+
 	"github.com/zhavkk/gRPC_auth_service/internal/config"
 	"github.com/zhavkk/gRPC_auth_service/internal/grpc/auth"
-	"github.com/zhavkk/gRPC_auth_service/internal/lib/jwt"
+	"github.com/zhavkk/gRPC_auth_service/internal/logger"
+	"github.com/zhavkk/gRPC_auth_service/internal/pkg/jwt"
 	"github.com/zhavkk/gRPC_auth_service/internal/repository/postgres"
 	"github.com/zhavkk/gRPC_auth_service/internal/service"
 	"github.com/zhavkk/gRPC_auth_service/internal/storage"
@@ -28,46 +30,40 @@ import (
 
 const bufSize = 1024 * 1024
 
+type contextKey string
+
+const claimsKey contextKey = "claims"
+
 func setupTestServer(t *testing.T) (*grpc.ClientConn, func()) {
 	lis := bufconn.Listen(bufSize)
-	s := grpc.NewServer()
 
 	cfg := config.Config{
-		DB: config.DB{
-			Host:     "localhost",
-			Port:     "5433",
-			User:     "testuser",
-			Password: "testpass",
-			Name:     "testdb",
-		},
+		DBURL: "postgres://testuser:testpass@localhost:5432/testdb?sslmode=disable",
 	}
-
-	storage, err := storage.NewStorage(context.Background(), &cfg)
+	db, err := storage.NewStorage(context.Background(), &cfg)
 	require.NoError(t, err, "failed to create storage")
 
-	_, err = storage.GetPool().Exec(context.Background(), "TRUNCATE TABLE users CASCADE")
+	_, err = db.GetPool().Exec(context.Background(), "TRUNCATE TABLE users CASCADE")
 	require.NoError(t, err, "failed to clean up database")
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	repo := postgres.NewUserRepository(storage, logger)
+	repo := postgres.NewUserRepository(db)
+	jwtCfg := jwt.Config{Secret: "testsecret", TokenTTL: time.Hour}
+	txManager, err := storage.NewTxManager(context.Background(), &cfg)
+	require.NoError(t, err)
 
-	jwtConfig := jwt.Config{
-		Secret:   "testsecret",
-		TokenTTL: time.Hour,
-	}
-	service := service.NewAuthService(repo, logger, jwtConfig)
+	svc := service.NewAuthService(repo, jwtCfg, txManager)
 
-	// Create a test interceptor that will add claims to context
-	testInterceptor := func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		md, ok := metadata.FromIncomingContext(ctx)
-		if ok {
+	interceptor := func(ctx context.Context,
+		req interface{}, info *grpc.UnaryServerInfo,
+		handler grpc.UnaryHandler,
+	) (interface{}, error) {
+		if md, ok := metadata.FromIncomingContext(ctx); ok {
 			if authHeader := md.Get("authorization"); len(authHeader) > 0 {
 				token := authHeader[0]
 				if len(token) > 7 && token[:7] == "Bearer " {
-					token = token[7:]
-					claims, err := jwt.ValidateToken(token, jwtConfig)
-					if err == nil {
-						ctx = context.WithValue(ctx, "claims", claims)
+					tkn := token[7:]
+					if claims, err := jwt.ValidateToken(tkn, jwtCfg); err == nil {
+						ctx = context.WithValue(ctx, claimsKey, claims)
 					}
 				}
 			}
@@ -75,38 +71,38 @@ func setupTestServer(t *testing.T) (*grpc.ClientConn, func()) {
 		return handler(ctx, req)
 	}
 
-	s = grpc.NewServer(grpc.UnaryInterceptor(testInterceptor))
-	auth.Register(s, service)
-
+	srv := grpc.NewServer(grpc.UnaryInterceptor(interceptor))
+	auth.Register(srv, svc)
+	errCh := make(chan error, 1)
 	go func() {
-		if err := s.Serve(lis); err != nil {
-			t.Fatalf("Server exited with error: %v", err)
-		}
+		errCh <- srv.Serve(lis)
 	}()
 
-	conn, err := grpc.Dial("bufnet",
-		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) {
-			return lis.Dial()
-		}),
+	conn, err := grpc.NewClient(
+		"bufnet",
+		grpc.WithContextDialer(func(context.Context, string) (net.Conn, error) { return lis.Dial() }),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
-	require.NoError(t, err, "Failed to dial bufnet")
+	require.NoError(t, err, "failed to dial bufnet")
 
 	return conn, func() {
-		conn.Close()
-		s.Stop()
-		// Clean up the database after tests
-		_, err := storage.GetPool().Exec(context.Background(), "TRUNCATE TABLE users CASCADE")
+		if err := conn.Close(); err != nil {
+			t.Errorf("failed to close connection: %v", err)
+		}
+		srv.GracefulStop()
+		if serveErr := <-errCh; serveErr != nil && serveErr != grpc.ErrServerStopped {
+			t.Fatalf("server exited with error: %v", serveErr)
+		}
+		_, err := db.GetPool().Exec(context.Background(), "TRUNCATE TABLE users CASCADE")
 		require.NoError(t, err, "failed to clean up database")
 	}
 }
-
 func TestRegister(t *testing.T) {
+	logger.Log = slog.Default()
 	conn, cleanup := setupTestServer(t)
 	defer cleanup()
-
 	client := authproto.NewAuthClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	tests := []struct {
@@ -144,21 +140,6 @@ func TestRegister(t *testing.T) {
 		},
 		{
 			name: "invalid registration role as admin",
-			req: &authproto.RegisterRequest{
-				Username: "testuser3",
-				Email:    "test3@example.com",
-				Password: "Password123!",
-				Gender:   true,
-				Country:  "RU",
-				Age:      25,
-				Role:     "admin",
-			},
-			wantErr:     true,
-			errCode:     codes.InvalidArgument,
-			description: "role must be either 'user' or 'artist'",
-		},
-		{
-			name: "invalid role",
 			req: &authproto.RegisterRequest{
 				Username: "testuser3",
 				Email:    "test3@example.com",
@@ -270,14 +251,13 @@ func TestRegister(t *testing.T) {
 }
 
 func TestLogin(t *testing.T) {
+	logger.Log = slog.Default()
 	conn, cleanup := setupTestServer(t)
 	defer cleanup()
-
 	client := authproto.NewAuthClient(conn)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
 
-	// Register a new user for login test
 	regResp, err := client.Register(ctx, &authproto.RegisterRequest{
 		Username: "logintest",
 		Email:    "login@example.com",
@@ -312,7 +292,7 @@ func TestLogin(t *testing.T) {
 				Password: "WrongPassword123!",
 			},
 			wantErr:     true,
-			errCode:     codes.Internal,
+			errCode:     codes.Unauthenticated,
 			description: "invalid email or password",
 		},
 		{
@@ -322,7 +302,7 @@ func TestLogin(t *testing.T) {
 				Password: "Password123!",
 			},
 			wantErr:     true,
-			errCode:     codes.Internal,
+			errCode:     codes.Unauthenticated,
 			description: "invalid email or password",
 		},
 		{
@@ -360,14 +340,13 @@ func TestLogin(t *testing.T) {
 }
 
 func TestConcurrentRegistration(t *testing.T) {
+	logger.Log = slog.Default()
 	conn, cleanup := setupTestServer(t)
 	defer cleanup()
-
 	client := authproto.NewAuthClient(conn)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
 
-	// Test concurrent registration with the same email
 	done := make(chan bool)
 	email := "concurrent@example.com"
 
@@ -397,19 +376,17 @@ func TestConcurrentRegistration(t *testing.T) {
 		}
 	}
 
-	// Only one registration should be successful
 	assert.Equal(t, 1, successCount)
 }
 
 func TestSetUserRole(t *testing.T) {
+	logger.Log = slog.Default()
 	conn, cleanup := setupTestServer(t)
 	defer cleanup()
-
 	client := authproto.NewAuthClient(conn)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
 
-	// Register admin user
 	adminRegResp, err := client.Register(ctx, &authproto.RegisterRequest{
 		Username: "admin",
 		Email:    "admin@example.com",
@@ -421,22 +398,14 @@ func TestSetUserRole(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Set admin role directly in database
 	storage, err := storage.NewStorage(ctx, &config.Config{
-		DB: config.DB{
-			Host:     "localhost",
-			Port:     "5433",
-			User:     "testuser",
-			Password: "testpass",
-			Name:     "testdb",
-		},
+		DBURL: "postgres://testuser:testpass@localhost:5432/testdb?sslmode=disable",
 	})
 	require.NoError(t, err)
 
 	_, err = storage.GetPool().Exec(ctx, "UPDATE users SET role = 'admin' WHERE id = $1", adminRegResp.GetId())
 	require.NoError(t, err)
 
-	// Login as admin
 	adminLoginResp, err := client.Login(ctx, &authproto.LoginRequest{
 		Email:    "admin@example.com",
 		Password: "Password123!",
@@ -445,7 +414,6 @@ func TestSetUserRole(t *testing.T) {
 
 	ctxWithAdminToken := metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+adminLoginResp.GetToken())
 
-	// Register regular user
 	userRegResp, err := client.Register(ctx, &authproto.RegisterRequest{
 		Username: "regularuser",
 		Email:    "regular@example.com",
@@ -457,7 +425,6 @@ func TestSetUserRole(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Login as regular user
 	userLoginResp, err := client.Login(ctx, &authproto.LoginRequest{
 		Email:    "regular@example.com",
 		Password: "Password123!",
@@ -552,14 +519,13 @@ func TestSetUserRole(t *testing.T) {
 }
 
 func TestUpdateUser(t *testing.T) {
+	logger.Log = slog.Default()
 	conn, cleanup := setupTestServer(t)
 	defer cleanup()
-
 	client := authproto.NewAuthClient(conn)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
 
-	// Register a test user
 	regResp, err := client.Register(ctx, &authproto.RegisterRequest{
 		Username: "updateuser",
 		Email:    "update@example.com",
@@ -572,7 +538,6 @@ func TestUpdateUser(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, regResp.GetId())
 
-	// Login to get token
 	loginResp, err := client.Login(ctx, &authproto.LoginRequest{
 		Email:    "update@example.com",
 		Password: "Password123!",
@@ -663,7 +628,7 @@ func TestUpdateUser(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var testCtx context.Context
 			if tt.name == "invalid token" {
-				testCtx = ctx // Use context without token
+				testCtx = ctx
 			} else {
 				testCtx = ctxWithToken
 			}
@@ -689,6 +654,7 @@ func TestUpdateUser(t *testing.T) {
 }
 
 func TestChangePassword(t *testing.T) {
+	logger.Log = slog.Default()
 	conn, cleanup := setupTestServer(t)
 	defer cleanup()
 
@@ -696,7 +662,6 @@ func TestChangePassword(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
 	defer cancel()
 
-	// Register a test user
 	regResp, err := client.Register(ctx, &authproto.RegisterRequest{
 		Username: "passworduser",
 		Email:    "password@example.com",
@@ -709,7 +674,6 @@ func TestChangePassword(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, regResp.GetId())
 
-	// Login to get token
 	loginResp, err := client.Login(ctx, &authproto.LoginRequest{
 		Email:    "password@example.com",
 		Password: "OldPassword123!",
@@ -744,7 +708,7 @@ func TestChangePassword(t *testing.T) {
 			},
 			wantErr:     true,
 			errCode:     codes.Internal,
-			description: "invalid old password",
+			description: "invalid password",
 		},
 		{
 			name: "invalid new password",
@@ -777,7 +741,7 @@ func TestChangePassword(t *testing.T) {
 			},
 			wantErr:     true,
 			errCode:     codes.Unauthenticated,
-			description: "claims not found",
+			description: "invalid token",
 		},
 	}
 
@@ -785,7 +749,7 @@ func TestChangePassword(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var testCtx context.Context
 			if tt.name == "invalid token" {
-				testCtx = ctx // Use context without token
+				testCtx = ctx
 			} else {
 				testCtx = ctxWithToken
 			}
@@ -810,14 +774,13 @@ func TestChangePassword(t *testing.T) {
 }
 
 func TestGetUser(t *testing.T) {
+	logger.Log = slog.Default()
 	conn, cleanup := setupTestServer(t)
 	defer cleanup()
-
 	client := authproto.NewAuthClient(conn)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Register test user
 	regResp, err := client.Register(ctx, &authproto.RegisterRequest{
 		Username: "getuser",
 		Email:    "getuser@example.com",
@@ -830,33 +793,24 @@ func TestGetUser(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, regResp.GetId())
 
-	// Create storage connection for verification
-	storage, err := storage.NewStorage(ctx, &config.Config{
-		DB: config.DB{
-			Host:     "localhost",
-			Port:     "5433",
-			User:     "testuser",
-			Password: "testpass",
-			Name:     "testdb",
-		},
-	})
+	storage, err := storage.NewStorage(ctx,
+		&config.Config{
+			DBURL: "postgres://testuser:testpass@localhost:5432/testdb?sslmode=disable",
+			GRPC: config.GRPCConfig{
+				Port:    8080,
+				Timeout: time.Second * 5,
+			},
+		})
 	require.NoError(t, err)
-
-	// Verify user exists using transaction
-	tx, err := storage.GetPool().Begin(ctx)
-	require.NoError(t, err)
-	defer tx.Rollback(ctx)
 
 	var exists bool
-	err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)", regResp.GetId()).Scan(&exists)
+	err = storage.GetPool().QueryRow(ctx,
+		"SELECT EXISTS(SELECT 1 FROM users WHERE id = $1)",
+		regResp.GetId(),
+	).Scan(&exists)
 	require.NoError(t, err)
 	require.True(t, exists, "User should exist in database")
 
-	// Commit transaction
-	err = tx.Commit(ctx)
-	require.NoError(t, err)
-
-	// Login to get token
 	loginResp, err := client.Login(ctx, &authproto.LoginRequest{
 		Email:    "getuser@example.com",
 		Password: "Password123!",
@@ -864,7 +818,10 @@ func TestGetUser(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, loginResp.GetToken())
 
-	ctxWithToken := metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+loginResp.GetToken())
+	ctxWithToken := metadata.AppendToOutgoingContext(ctx,
+		"authorization",
+		"Bearer "+loginResp.GetToken(),
+	)
 
 	tests := []struct {
 		name        string

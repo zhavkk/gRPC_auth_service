@@ -390,7 +390,7 @@ func TestValidateEmail(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "missing domain",
+			name:    "missing models",
 			email:   "test@",
 			wantErr: true,
 		},
@@ -400,7 +400,7 @@ func TestValidateEmail(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "missing @ and domain",
+			name:    "missing @ and models",
 			email:   "test",
 			wantErr: true,
 		},
@@ -410,7 +410,7 @@ func TestValidateEmail(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "missing @ and local part and domain",
+			name:    "missing @ and local part and models",
 			email:   "test",
 			wantErr: true,
 		},

@@ -1,22 +1,24 @@
+// Package auth реализует gRPC-методы для аутентификации пользователей.
 package auth
 
 import (
 	"context"
 
-	"github.com/golang-jwt/jwt/v5"
 	authproto "github.com/zhavkk/Auth-protobuf/gen/go/auth"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-func (s *serverAPI) Login(ctx context.Context, req *authproto.LoginRequest) (*authproto.LoginResponse, error) {
+func (s *serverAPI) Login(ctx context.Context,
+	req *authproto.LoginRequest,
+) (*authproto.LoginResponse, error) {
 	if err := s.validator.ValidateLoginRequest(req); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
 	resp, err := s.service.Login(ctx, req.GetEmail(), req.GetPassword())
 	if err != nil {
-		return nil, status.Error(codes.Internal, err.Error())
+		return nil, status.Error(codes.Unauthenticated, err.Error())
 	}
 
 	return &authproto.LoginResponse{
@@ -28,18 +30,16 @@ func (s *serverAPI) Login(ctx context.Context, req *authproto.LoginRequest) (*au
 	}, nil
 }
 
-func (s *serverAPI) ChangePassword(ctx context.Context, req *authproto.ChangePasswordRequest) (*authproto.ChangePasswordResponse, error) {
+func (s *serverAPI) ChangePassword(ctx context.Context,
+	req *authproto.ChangePasswordRequest,
+) (*authproto.ChangePasswordResponse, error) {
 	if err := s.validator.ValidateChangePasswordRequest(req); err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
-	claims, ok := ctx.Value("claims").(jwt.MapClaims)
-	if !ok {
-		return nil, status.Error(codes.Unauthenticated, "claims not found")
-	}
 
-	userIDFromToken, ok := claims["uuid"].(string)
-	if !ok {
-		return nil, status.Error(codes.Unauthenticated, "invalid token claims")
+	userIDFromToken, err := GetUserIDFromContext(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	if req.Id != userIDFromToken {

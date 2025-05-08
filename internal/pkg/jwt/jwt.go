@@ -1,3 +1,4 @@
+// Package jwt предоставляет функции для генерации и валидации JWT токенов.
 package jwt
 
 import (
@@ -5,7 +6,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/zhavkk/gRPC_auth_service/internal/domain"
+
+	"github.com/zhavkk/gRPC_auth_service/internal/models"
 )
 
 const (
@@ -20,8 +22,7 @@ type Config struct {
 	TokenTTL time.Duration
 }
 
-// TODO: unit test
-func NewToken(user domain.User, config Config) (string, error) {
+func NewToken(user models.User, config Config) (string, error) {
 	claims := jwt.MapClaims{
 		ClaimUUID:  user.ID,
 		ClaimEmail: user.Email,
@@ -38,7 +39,9 @@ func NewToken(user domain.User, config Config) (string, error) {
 	return tokenString, nil
 }
 
-func ValidateToken(tokenString string, config Config) (jwt.MapClaims, error) {
+func ValidateToken(tokenString string,
+	config Config,
+) (jwt.MapClaims, error) {
 	token, err := jwt.Parse(
 		tokenString,
 		func(token *jwt.Token) (interface{}, error) {
@@ -61,7 +64,6 @@ func ValidateToken(tokenString string, config Config) (jwt.MapClaims, error) {
 		return nil, errors.New("invalid token claims")
 	}
 
-	// Проверяем expiration
 	exp, ok := claims[ClaimExp].(float64)
 	if !ok {
 		return nil, errors.New("invalid expiration time")

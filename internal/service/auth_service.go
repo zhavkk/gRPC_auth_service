@@ -1,3 +1,4 @@
+// Package service реализует бизнес-логику сервиса авторизации.
 package service
 
 import (
@@ -7,23 +8,30 @@ import (
 	"log/slog"
 
 	"github.com/google/uuid"
-	"github.com/zhavkk/gRPC_auth_service/internal/domain"
-	"github.com/zhavkk/gRPC_auth_service/internal/lib/jwt"
-	"github.com/zhavkk/gRPC_auth_service/internal/repository/postgres"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/zhavkk/gRPC_auth_service/internal/logger"
+	"github.com/zhavkk/gRPC_auth_service/internal/models"
+	"github.com/zhavkk/gRPC_auth_service/internal/pkg/jwt"
+	"github.com/zhavkk/gRPC_auth_service/internal/repository/postgres"
+	"github.com/zhavkk/gRPC_auth_service/internal/storage"
 )
 
 type AuthService struct {
 	userRepo  postgres.UserRepository
-	log       *slog.Logger
 	jwtConfig jwt.Config
+	txManager storage.TxManagerInterface
 }
 
-func NewAuthService(userRepo postgres.UserRepository, log *slog.Logger, jwtConfig jwt.Config) *AuthService {
+func NewAuthService(
+	userRepo postgres.UserRepository,
+	jwtConfig jwt.Config,
+	txManager storage.TxManagerInterface,
+) *AuthService {
 	return &AuthService{
 		userRepo:  userRepo,
-		log:       log,
 		jwtConfig: jwtConfig,
+		txManager: txManager,
 	}
 }
 
@@ -36,66 +44,76 @@ func (s *AuthService) Register(
 	country string,
 	age int32,
 	role string,
-) (*domain.RegisterResponse, error) {
-
+) (*models.RegisterResponse, error) {
 	const op = "auth_service.Register"
 
-	log := s.log.With(slog.String("op", op))
+	resp := &models.RegisterResponse{}
+	err := s.txManager.RunSerializable(ctx, func(ctx context.Context) error {
+		_, err := s.userRepo.GetUserByEmail(ctx, email)
+		if err == nil {
+			return ErrUserAlreadyExists
+		}
 
-	_, err := s.userRepo.GetUserByEmail(ctx, email)
-	if err == nil {
-		return nil, errors.New("user with this email already exists")
-	}
+		PassHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		if err != nil {
+			logger.Log.Error("Failed to generate password hash", "err", err)
+			return fmt.Errorf("%s %w", op, ErrHashPassword)
+		}
 
-	PassHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		user := &models.User{
+			ID:       uuid.New().String(),
+			Username: username,
+			Email:    email,
+			PassHash: string(PassHash),
+			Gender:   gender,
+			Country:  country,
+			Age:      age,
+			Role:     role,
+		}
+
+		if err := s.userRepo.CreateUser(ctx, user); err != nil {
+			logger.Log.Error("Failed to create user", "err", err)
+			return fmt.Errorf("%s %w", op, ErrFailedToCreateUser)
+		}
+
+		resp = &models.RegisterResponse{
+			ID: user.ID,
+		}
+		return nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to hash password: %w", err)
+		return nil, fmt.Errorf("%s %w", op, err)
 	}
 
-	user := &domain.User{
-		ID:       uuid.New().String(),
-		Username: username,
-		Email:    email,
-		PassHash: string(PassHash),
-		Gender:   gender,
-		Country:  country,
-		Age:      age,
-		Role:     role,
-	}
-
-	if err := s.userRepo.CreateUser(ctx, user); err != nil {
-		return nil, fmt.Errorf("failed to create user: %w", err)
-	}
-	log.Info("user register  successfully")
-	return &domain.RegisterResponse{
-		ID: user.ID,
-	}, nil
+	logger.Log.With(slog.String("op", op)).Info("user register  successfully")
+	return resp, nil
 }
 
 func (s *AuthService) Login(
 	ctx context.Context,
 	email string,
 	password string,
-) (*domain.LoginResponse, error) {
+) (*models.LoginResponse, error) {
 	const op = "auth_service.Login"
-	log := s.log.With(slog.String("op", op))
 
 	user, err := s.userRepo.GetUserByEmail(ctx, email)
 	if err != nil {
-		return nil, errors.New("invalid email or password")
+		logger.Log.Error("Failed to get user by email", "err", err)
+		return nil, fmt.Errorf("%s %w", op, ErrInvalidEmailOrPassword)
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PassHash), []byte(password)); err != nil {
-		return nil, errors.New("invalid email or password")
+		logger.Log.Error("Failed to compare password", "err", err)
+		return nil, fmt.Errorf("%s %w", op, ErrInvalidEmailOrPassword)
 	}
 
 	token, err := jwt.NewToken(*user, s.jwtConfig)
 	if err != nil {
-		s.log.Error("failed to generate token")
-		return nil, fmt.Errorf("%s %w", op, err)
+		logger.Log.Error("Failed to generate token", "err", err)
+		return nil, fmt.Errorf("%s %w", op, ErrFailedToGenerateToken)
 	}
-	log.Info("User logged in")
-	return &domain.LoginResponse{
+	logger.Log.With(slog.String("op", op)).Info("User logged in")
+	return &models.LoginResponse{
 		ID:       user.ID,
 		Username: user.Username,
 		Email:    user.Email,
@@ -108,44 +126,61 @@ func (s *AuthService) SetUserRole(
 	ctx context.Context,
 	id string,
 	role string,
-) (*domain.SetUserRoleResponse, error) {
+) (*models.SetUserRoleResponse, error) {
 	const op = "auth_service.SetUserRole"
 
-	log := s.log.With(slog.String("op", op))
-	user, err := s.userRepo.GetUserByID(ctx, id)
-	if err != nil {
-		if errors.Is(err, domain.ErrUserNotFound) {
-			return nil, fmt.Errorf("user not found")
+	resp := &models.SetUserRoleResponse{}
+	err := s.txManager.RunSerializable(ctx, func(ctx context.Context) error {
+		user, err := s.userRepo.GetUserByID(ctx, id)
+		if err != nil {
+			if errors.Is(err, models.ErrUserNotFound) {
+				return fmt.Errorf("%s %w", op, ErrUserNotFound)
+			}
+			logger.Log.Error("Failed to get user", "err", err)
+			return fmt.Errorf("%s %w", op, ErrFailedToGetUser)
 		}
-		return nil, fmt.Errorf("failed to get user: %w", err)
+
+		if !isValidRole(role) {
+			logger.Log.Error("Invalid role", "err", err)
+			return fmt.Errorf("%s %w", op, ErrInvalidRole)
+		}
+
+		if err := s.userRepo.UpdateUserRole(ctx, id, role); err != nil {
+			logger.Log.Error("Failed to update user role", "err", err)
+			return fmt.Errorf("%s %w", op, ErrFailedToUpdateRole)
+		}
+		logger.Log.With(slog.String("op", op)).Info("User role was updated")
+		resp = &models.SetUserRoleResponse{
+			ID:   user.ID,
+			Role: role,
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%s %w", op, err)
 	}
 
-	if !isValidRole(role) {
-		return nil, errors.New("invalid role")
-	}
-
-	if err := s.userRepo.UpdateUserRole(ctx, id, role); err != nil {
-		return nil, fmt.Errorf("failed to update user role: %w", err)
-	}
-	log.Info("User role was updated")
-	return &domain.SetUserRoleResponse{
-		ID:   user.ID,
-		Role: role,
-	}, nil
+	return resp, nil
 }
 
 func (s *AuthService) GetUser(
 	ctx context.Context,
 	id string,
-) (*domain.GetUserResponse, error) {
+) (*models.GetUserResponse, error) {
 	const op = "auth_service.GetUser"
-	log := s.log.With(slog.String("op", op))
+
 	user, err := s.userRepo.GetUserByID(ctx, id)
 	if err != nil {
-		return nil, err
+		if errors.Is(err, ErrUserNotFound) {
+			logger.Log.Error("User not found", "err", err)
+			return nil, fmt.Errorf("%s %w", op, ErrUserNotFound)
+		}
+		logger.Log.Error("Failed to get user", "err", err)
+		return nil, fmt.Errorf("%s %w", op, ErrFailedToGetUser)
 	}
-	log.Info("user found successfully")
-	return &domain.GetUserResponse{
+
+	logger.Log.With(slog.String("op", op)).Info("user found successfully")
+	return &models.GetUserResponse{
 		ID:       user.ID,
 		Username: user.Username,
 		Email:    user.Email,
@@ -162,32 +197,42 @@ func (s *AuthService) UpdateUser(
 	username string,
 	country string,
 	age int32,
-) (*domain.UpdateUserResponse, error) {
+) (*models.UpdateUserResponse, error) {
 	const op = "auth_service.UpdateUser"
-	log := s.log.With(slog.String("op", op))
-	user, err := s.userRepo.GetUserByID(ctx, id)
+
+	resp := &models.UpdateUserResponse{}
+	err := s.txManager.RunSerializable(ctx, func(ctx context.Context) error {
+		user, err := s.userRepo.GetUserByID(ctx, id)
+		if err != nil {
+			logger.Log.Error("Failed to get user", "err", err)
+			return fmt.Errorf("%s %w", op, ErrFailedToGetUser)
+		}
+
+		user.Username = username
+		user.Country = country
+		user.Age = age
+
+		if err := s.userRepo.UpdateUser(ctx, user); err != nil {
+			logger.Log.Error("Failed to update user", "err", err)
+			return fmt.Errorf("%s %w", op, ErrFailedToUpdateUser)
+		}
+
+		logger.Log.With(slog.String("op", op)).Info("User was updated")
+		resp = &models.UpdateUserResponse{
+			ID:       user.ID,
+			Username: user.Username,
+			Email:    user.Email,
+			Gender:   user.Gender,
+			Country:  user.Country,
+			Age:      user.Age,
+			Role:     user.Role,
+		}
+		return nil
+	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s %w", op, err)
 	}
-
-	user.Username = username
-	user.Country = country
-	user.Age = age
-
-	if err := s.userRepo.UpdateUser(ctx, user); err != nil {
-		return nil, fmt.Errorf("failed to update user: %w", err)
-	}
-
-	log.Info("User was updated")
-	return &domain.UpdateUserResponse{
-		ID:       user.ID,
-		Username: user.Username,
-		Email:    user.Email,
-		Gender:   user.Gender,
-		Country:  user.Country,
-		Age:      user.Age,
-		Role:     user.Role,
-	}, nil
+	return resp, nil
 }
 
 func (s *AuthService) ChangePassword(
@@ -195,31 +240,41 @@ func (s *AuthService) ChangePassword(
 	id string,
 	oldPassword string,
 	newPassword string,
-) (*domain.ChangePasswordResponse, error) {
+) (*models.ChangePasswordResponse, error) {
 	const op = "auth_service.ChangePassword"
 
-	log := s.log.With(slog.String("op", op))
-	user, err := s.userRepo.GetUserByID(ctx, id)
+	resp := &models.ChangePasswordResponse{}
+	err := s.txManager.RunSerializable(ctx, func(ctx context.Context) error {
+		user, err := s.userRepo.GetUserByID(ctx, id)
+		if err != nil {
+			logger.Log.Error("Failed to get user", "err", err)
+			return fmt.Errorf("%s %w", op, ErrFailedToGetUser)
+		}
+
+		if err := bcrypt.CompareHashAndPassword([]byte(user.PassHash), []byte(oldPassword)); err != nil {
+			return fmt.Errorf("%s %w", op, ErrInvalidPassword)
+		}
+
+		PassHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+		if err != nil {
+			logger.Log.Error("Failed to generate password hash", "err", err)
+			return fmt.Errorf("%s %w", op, ErrHashPassword)
+		}
+
+		if err := s.userRepo.UpdateUserPassword(ctx, id, string(PassHash)); err != nil {
+			logger.Log.Error("Failed to update user password", "err", err)
+			return fmt.Errorf("%s %w", op, ErrFailedToUpdatePassword)
+		}
+		logger.Log.With(slog.String("op", op)).Info("Pass was changed")
+		resp = &models.ChangePasswordResponse{
+			Success: true,
+		}
+		return nil
+	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s %w", op, err)
 	}
-
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PassHash), []byte(oldPassword)); err != nil {
-		return nil, errors.New("invalid old password")
-	}
-
-	PassHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
-	if err != nil {
-		return nil, fmt.Errorf("failed to hash password: %w", err)
-	}
-
-	if err := s.userRepo.UpdateUserPassword(ctx, id, string(PassHash)); err != nil {
-		return nil, fmt.Errorf("failed to update password: %w", err)
-	}
-	log.Info("Pass was changed")
-	return &domain.ChangePasswordResponse{
-		Success: true,
-	}, nil
+	return resp, nil
 }
 
 func isValidRole(role string) bool {

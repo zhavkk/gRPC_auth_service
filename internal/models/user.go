@@ -1,4 +1,5 @@
-package domain
+// Package models содержит базовые ошибки и доменные сущности для auth-сервиса.
+package models
 
 import (
 	"time"

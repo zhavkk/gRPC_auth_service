@@ -34,16 +34,16 @@ func ValidatePassword(password string) error {
 		return ErrInvalidPassword
 	}
 	if !regexp.MustCompile(`[A-Z]`).MatchString(password) {
-		return errors.New("password must contain at least one uppercase letter")
+		return ErrInvalidPassword
 	}
 	if !regexp.MustCompile(`[a-z]`).MatchString(password) {
-		return errors.New("password must contain at least one lowercase letter")
+		return ErrInvalidPassword
 	}
 	if !regexp.MustCompile(`[0-9]`).MatchString(password) {
-		return errors.New("password must contain at least one number")
+		return ErrInvalidPassword
 	}
 	if !regexp.MustCompile(`[^a-zA-Z0-9]`).MatchString(password) {
-		return errors.New("password must contain at least one special character")
+		return ErrInvalidPassword
 	}
 	return nil
 }
