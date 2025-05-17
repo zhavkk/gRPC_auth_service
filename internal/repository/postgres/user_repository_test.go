@@ -17,7 +17,7 @@ import (
 )
 
 func setupTestDB(t *testing.T) *pgxpool.Pool {
-	dsn := "postgres://testuser:testpass@localhost:5432/testdb?sslmode=disable"
+	dsn := "postgres://testuser:testpass@localhost:5432/auth_db?sslmode=disable"
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -41,7 +41,7 @@ func TestUserRepository_Postgres(t *testing.T) {
 
 	cfg := config.Config{
 
-		DBURL: "postgres://testuser:testpass@localhost:5432/testdb?sslmode=disable",
+		DBURL: "postgres://testuser:testpass@localhost:5432/auth_db?sslmode=disable",
 	}
 
 	storage, err := storage.NewStorage(context.Background(), &cfg)

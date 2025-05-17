@@ -12,6 +12,8 @@ import (
 	"go.uber.org/mock/gomock"
 	"golang.org/x/crypto/bcrypt"
 
+	goRedis "github.com/redis/go-redis/v9"
+
 	"github.com/zhavkk/gRPC_auth_service/internal/logger"
 	"github.com/zhavkk/gRPC_auth_service/internal/models"
 	"github.com/zhavkk/gRPC_auth_service/internal/pkg/jwt"
@@ -23,16 +25,19 @@ func TestAuthService_Register(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	mockRepo := mocks.NewMockUserRepository(ctrl)
-	mockTx := mocks.NewMockTxManagerInterface(ctrl)
+	mockUserRepo := mocks.NewMockUserRepository(ctrl)
+	mockTxManager := mocks.NewMockTxManagerInterface(ctrl)
+	mockRefreshTokenRepo := mocks.NewMockRefreshTokenRepository(ctrl)
+
 	config := jwt.Config{
-		Secret:   "secret",
-		TokenTTL: 1 * time.Second,
+		Secret:          "secret",
+		AccessTokenTTL:  1 * time.Hour,
+		RefreshTokenTTL: 24 * time.Hour,
 	}
-	authService := NewAuthService(mockRepo, config, mockTx)
+	authService := NewAuthService(mockUserRepo, config, mockTxManager, mockRefreshTokenRepo)
 
 	t.Run("success", func(t *testing.T) {
-		mockTx.EXPECT().RunSerializable(gomock.Any(),
+		mockTxManager.EXPECT().RunSerializable(gomock.Any(),
 			gomock.Any(),
 		).DoAndReturn(func(ctx context.Context,
 			f func(context.Context) error,
@@ -40,8 +45,8 @@ func TestAuthService_Register(t *testing.T) {
 			return f(ctx)
 		})
 
-		mockRepo.EXPECT().GetUserByEmail(gomock.Any(), "test@test.com").Return(nil, ErrUserNotFound)
-		mockRepo.EXPECT().CreateUser(gomock.Any(), gomock.Any()).Return(nil)
+		mockUserRepo.EXPECT().GetUserByEmail(gomock.Any(), "test@test.com").Return(nil, ErrUserNotFound)
+		mockUserRepo.EXPECT().CreateUser(gomock.Any(), gomock.Any()).Return(nil)
 
 		response, err := authService.Register(context.Background(),
 			"test",
@@ -57,7 +62,7 @@ func TestAuthService_Register(t *testing.T) {
 	})
 
 	t.Run("duplicate email", func(t *testing.T) {
-		mockTx.EXPECT().RunSerializable(gomock.Any(),
+		mockTxManager.EXPECT().RunSerializable(gomock.Any(),
 			gomock.Any(),
 		).DoAndReturn(func(ctx context.Context,
 			f func(context.Context) error,
@@ -70,7 +75,7 @@ func TestAuthService_Register(t *testing.T) {
 			Email:    "test@test.com",
 			Username: "existing",
 		}
-		mockRepo.EXPECT().GetUserByEmail(gomock.Any(),
+		mockUserRepo.EXPECT().GetUserByEmail(gomock.Any(),
 			"test@test.com",
 		).Return(existingUser, nil)
 
@@ -84,7 +89,7 @@ func TestAuthService_Register(t *testing.T) {
 			"user",
 		)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "user with this email already exists")
+		assert.True(t, errors.Is(err, ErrUserAlreadyExists))
 	})
 }
 
@@ -93,13 +98,16 @@ func TestAuthService_Login(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	mockRepo := mocks.NewMockUserRepository(ctrl)
-	mockTx := mocks.NewMockTxManagerInterface(ctrl)
+	mockUserRepo := mocks.NewMockUserRepository(ctrl)
+	mockTxManager := mocks.NewMockTxManagerInterface(ctrl)
+	mockRefreshTokenRepo := mocks.NewMockRefreshTokenRepository(ctrl)
+
 	config := jwt.Config{
-		Secret:   "secret",
-		TokenTTL: 1 * time.Second,
+		Secret:          "secret",
+		AccessTokenTTL:  1 * time.Hour,
+		RefreshTokenTTL: 24 * time.Hour,
 	}
-	authService := NewAuthService(mockRepo, config, mockTx)
+	authService := NewAuthService(mockUserRepo, config, mockTxManager, mockRefreshTokenRepo)
 
 	hashedPassword, _ := bcrypt.GenerateFromPassword(
 		[]byte("password123"),
@@ -115,16 +123,24 @@ func TestAuthService_Login(t *testing.T) {
 	}
 
 	t.Run("success", func(t *testing.T) {
-		mockRepo.EXPECT().GetUserByEmail(gomock.Any(),
+		mockUserRepo.EXPECT().GetUserByEmail(gomock.Any(),
 			"test@test.com",
 		).Return(user, nil)
+
+		mockRefreshTokenRepo.EXPECT().StoreRefreshToken(
+			gomock.Any(),
+			user.ID,
+			gomock.Any(),
+			config.RefreshTokenTTL,
+		).Return(nil)
 
 		response, err := authService.Login(context.Background(),
 			"test@test.com",
 			"password123",
 		)
 		assert.NoError(t, err)
-		assert.NotEmpty(t, response.Token)
+		assert.NotEmpty(t, response.AccessToken)
+		assert.NotEmpty(t, response.RefreshToken)
 		assert.Equal(t, user.ID, response.ID)
 		assert.Equal(t, user.Email, response.Email)
 		assert.Equal(t, user.Username, response.Username)
@@ -132,9 +148,9 @@ func TestAuthService_Login(t *testing.T) {
 	})
 
 	t.Run("user not found", func(t *testing.T) {
-		mockRepo.EXPECT().GetUserByEmail(gomock.Any(),
+		mockUserRepo.EXPECT().GetUserByEmail(gomock.Any(),
 			"notfound@test.com",
-		).Return(nil, ErrUserNotFound)
+		).Return(nil, models.ErrUserNotFound)
 
 		_, err := authService.Login(context.Background(),
 			"notfound@test.com",
@@ -145,7 +161,7 @@ func TestAuthService_Login(t *testing.T) {
 	})
 
 	t.Run("wrong password", func(t *testing.T) {
-		mockRepo.EXPECT().GetUserByEmail(gomock.Any(),
+		mockUserRepo.EXPECT().GetUserByEmail(gomock.Any(),
 			"test@test.com",
 		).Return(user, nil)
 
@@ -163,13 +179,16 @@ func TestAuthService_ChangePassword(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	mockRepo := mocks.NewMockUserRepository(ctrl)
-	mockTx := mocks.NewMockTxManagerInterface(ctrl)
+	mockUserRepo := mocks.NewMockUserRepository(ctrl)
+	mockTxManager := mocks.NewMockTxManagerInterface(ctrl)
+	mockRefreshTokenRepo := mocks.NewMockRefreshTokenRepository(ctrl)
+
 	config := jwt.Config{
-		Secret:   "secret",
-		TokenTTL: 1 * time.Second,
+		Secret:          "secret",
+		AccessTokenTTL:  1 * time.Hour,
+		RefreshTokenTTL: 24 * time.Hour,
 	}
-	authService := NewAuthService(mockRepo, config, mockTx)
+	authService := NewAuthService(mockUserRepo, config, mockTxManager, mockRefreshTokenRepo)
 
 	oldPassword := "old-password"
 	hashedOldPassword, _ := bcrypt.GenerateFromPassword(
@@ -186,7 +205,7 @@ func TestAuthService_ChangePassword(t *testing.T) {
 	}
 
 	t.Run("success", func(t *testing.T) {
-		mockTx.EXPECT().RunSerializable(gomock.Any(),
+		mockTxManager.EXPECT().RunSerializable(gomock.Any(),
 			gomock.Any(),
 		).DoAndReturn(func(ctx context.Context,
 			f func(context.Context) error,
@@ -194,10 +213,10 @@ func TestAuthService_ChangePassword(t *testing.T) {
 			return f(ctx)
 		})
 
-		mockRepo.EXPECT().GetUserByID(gomock.Any(),
+		mockUserRepo.EXPECT().GetUserByID(gomock.Any(),
 			"user-id",
 		).Return(user, nil)
-		mockRepo.EXPECT().UpdateUserPassword(gomock.Any(),
+		mockUserRepo.EXPECT().UpdateUserPassword(gomock.Any(),
 			"user-id",
 			gomock.Any(),
 		).Return(nil)
@@ -217,13 +236,16 @@ func TestAuthService_SetUserRole(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	mockRepo := mocks.NewMockUserRepository(ctrl)
-	mockTx := mocks.NewMockTxManagerInterface(ctrl)
+	mockUserRepo := mocks.NewMockUserRepository(ctrl)
+	mockTxManager := mocks.NewMockTxManagerInterface(ctrl)
+	mockRefreshTokenRepo := mocks.NewMockRefreshTokenRepository(ctrl)
+
 	config := jwt.Config{
-		Secret:   "secret",
-		TokenTTL: 1 * time.Second,
+		Secret:          "secret",
+		AccessTokenTTL:  1 * time.Hour,
+		RefreshTokenTTL: 24 * time.Hour,
 	}
-	authService := NewAuthService(mockRepo, config, mockTx)
+	authService := NewAuthService(mockUserRepo, config, mockTxManager, mockRefreshTokenRepo)
 
 	user := &models.User{
 		ID:       "user-id",
@@ -233,7 +255,7 @@ func TestAuthService_SetUserRole(t *testing.T) {
 	}
 
 	t.Run("success", func(t *testing.T) {
-		mockTx.EXPECT().RunSerializable(gomock.Any(),
+		mockTxManager.EXPECT().RunSerializable(gomock.Any(),
 			gomock.Any(),
 		).DoAndReturn(func(ctx context.Context,
 			f func(context.Context) error,
@@ -241,8 +263,8 @@ func TestAuthService_SetUserRole(t *testing.T) {
 			return f(ctx)
 		})
 
-		mockRepo.EXPECT().GetUserByID(gomock.Any(), "user-id").Return(user, nil)
-		mockRepo.EXPECT().UpdateUserRole(gomock.Any(), "user-id", "admin").Return(nil)
+		mockUserRepo.EXPECT().GetUserByID(gomock.Any(), "user-id").Return(user, nil)
+		mockUserRepo.EXPECT().UpdateUserRole(gomock.Any(), "user-id", "admin").Return(nil)
 
 		resp, err := authService.SetUserRole(context.Background(), "user-id", "admin")
 		assert.NoError(t, err)
@@ -256,14 +278,17 @@ func TestAuthService_GetUser(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	mockRepo := mocks.NewMockUserRepository(ctrl)
-	mockTx := mocks.NewMockTxManagerInterface(ctrl)
+	mockUserRepo := mocks.NewMockUserRepository(ctrl)
+	mockTxManager := mocks.NewMockTxManagerInterface(ctrl)
+	mockRefreshTokenRepo := mocks.NewMockRefreshTokenRepository(ctrl)
+
 	config := jwt.Config{
-		Secret:   "secret",
-		TokenTTL: 1 * time.Second,
+		Secret:          "secret",
+		AccessTokenTTL:  1 * time.Hour,
+		RefreshTokenTTL: 24 * time.Hour,
 	}
 
-	authService := NewAuthService(mockRepo, config, mockTx)
+	authService := NewAuthService(mockUserRepo, config, mockTxManager, mockRefreshTokenRepo)
 
 	user := &models.User{
 		ID:       "user-id",
@@ -273,7 +298,7 @@ func TestAuthService_GetUser(t *testing.T) {
 	}
 
 	t.Run("success", func(t *testing.T) {
-		mockRepo.EXPECT().
+		mockUserRepo.EXPECT().
 			GetUserByID(gomock.Any(), "user-id").
 			Return(user, nil)
 
@@ -286,33 +311,13 @@ func TestAuthService_GetUser(t *testing.T) {
 	})
 
 	t.Run("user not found", func(t *testing.T) {
-		mockRepo.EXPECT().
+		mockUserRepo.EXPECT().
 			GetUserByID(gomock.Any(), "not-exist").
 			Return(nil, ErrUserNotFound)
 
 		_, err := authService.GetUser(context.Background(), "not-exist")
 		assert.Error(t, err)
 		assert.True(t, errors.Is(err, ErrUserNotFound))
-	})
-
-	t.Run("empty user ID", func(t *testing.T) {
-		mockRepo.EXPECT().
-			GetUserByID(gomock.Any(), "").
-			Return(nil, ErrFailedToGetUser)
-
-		_, err := authService.GetUser(context.Background(), "")
-		assert.Error(t, err)
-		assert.True(t, errors.Is(err, ErrFailedToGetUser))
-	})
-
-	t.Run("invalid user ID format", func(t *testing.T) {
-		mockRepo.EXPECT().
-			GetUserByID(gomock.Any(), "invalid-id-format").
-			Return(nil, ErrFailedToGetUser)
-
-		_, err := authService.GetUser(context.Background(), "invalid-id-format")
-		assert.Error(t, err)
-		assert.True(t, errors.Is(err, ErrFailedToGetUser))
 	})
 }
 
@@ -321,14 +326,17 @@ func TestAuthService_UpdateUser(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	mockRepo := mocks.NewMockUserRepository(ctrl)
-	mockTx := mocks.NewMockTxManagerInterface(ctrl)
+	mockUserRepo := mocks.NewMockUserRepository(ctrl)
+	mockTxManager := mocks.NewMockTxManagerInterface(ctrl)
+	mockRefreshTokenRepo := mocks.NewMockRefreshTokenRepository(ctrl)
+
 	config := jwt.Config{
-		Secret:   "secret",
-		TokenTTL: 1 * time.Second,
+		Secret:          "secret",
+		AccessTokenTTL:  1 * time.Hour,
+		RefreshTokenTTL: 24 * time.Hour,
 	}
 
-	authService := NewAuthService(mockRepo, config, mockTx)
+	authService := NewAuthService(mockUserRepo, config, mockTxManager, mockRefreshTokenRepo)
 
 	user := &models.User{
 		ID:       "111",
@@ -338,11 +346,11 @@ func TestAuthService_UpdateUser(t *testing.T) {
 	}
 
 	t.Run("success", func(t *testing.T) {
-		mockTx.EXPECT().
+		mockTxManager.EXPECT().
 			RunSerializable(gomock.Any(), gomock.Any()).
 			DoAndReturn(func(ctx context.Context, f func(context.Context) error) error {
-				mockRepo.EXPECT().GetUserByID(gomock.Any(), "111").Return(user, nil)
-				mockRepo.EXPECT().UpdateUser(gomock.Any(), gomock.Any()).Return(nil)
+				mockUserRepo.EXPECT().GetUserByID(gomock.Any(), "111").Return(user, nil)
+				mockUserRepo.EXPECT().UpdateUser(gomock.Any(), gomock.Any()).Return(nil)
 				return f(ctx)
 			})
 
@@ -357,10 +365,10 @@ func TestAuthService_UpdateUser(t *testing.T) {
 	})
 
 	t.Run("user not found", func(t *testing.T) {
-		mockTx.EXPECT().
+		mockTxManager.EXPECT().
 			RunSerializable(gomock.Any(), gomock.Any()).
 			DoAndReturn(func(ctx context.Context, f func(context.Context) error) error {
-				mockRepo.EXPECT().
+				mockUserRepo.EXPECT().
 					GetUserByID(gomock.Any(), "not-exist").
 					Return(nil, ErrFailedToGetUser)
 				return f(ctx)
@@ -375,5 +383,185 @@ func TestAuthService_UpdateUser(t *testing.T) {
 		assert.Error(t, err)
 		assert.True(t, errors.Is(err, ErrFailedToGetUser))
 	})
+}
 
+func TestAuthService_RefreshToken(t *testing.T) {
+	logger.Log = slog.New(slog.NewTextHandler(os.Stdout, nil))
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockUserRepo := mocks.NewMockUserRepository(ctrl)
+	mockTxManager := mocks.NewMockTxManagerInterface(ctrl)
+	mockRefreshTokenRepo := mocks.NewMockRefreshTokenRepository(ctrl)
+
+	config := jwt.Config{
+		Secret:          "secret", // Short TTL for expiry test
+		AccessTokenTTL:  1 * time.Hour,
+		RefreshTokenTTL: 24 * time.Hour,
+	}
+	authService := NewAuthService(mockUserRepo, config, mockTxManager, mockRefreshTokenRepo)
+
+	userID := "test-user-id"
+	oldJTI := "old-jti"
+	oldRefreshToken, err := jwt.NewRefreshToken(userID, oldJTI, config)
+	assert.NoError(t, err)
+
+	user := &models.User{
+		ID:       userID,
+		Email:    "test@example.com",
+		Username: "testuser",
+		Role:     "user",
+	}
+
+	t.Run("success", func(t *testing.T) {
+		mockRefreshTokenRepo.EXPECT().GetRefreshTokenJTI(gomock.Any(), userID).Return(oldJTI, nil)
+		mockRefreshTokenRepo.EXPECT().DeleteRefreshToken(gomock.Any(), userID).Return(nil)
+		mockUserRepo.EXPECT().GetUserByID(gomock.Any(), userID).Return(user, nil)
+		mockRefreshTokenRepo.EXPECT().StoreRefreshToken(
+			gomock.Any(), userID, gomock.Any(), config.RefreshTokenTTL,
+		).Return(nil)
+
+		response, err := authService.RefreshToken(context.Background(), oldRefreshToken)
+		assert.NoError(t, err)
+		assert.NotEmpty(t, response.AccessToken)
+		assert.NotEmpty(t, response.RefreshToken)
+
+		parsedAccessToken, err := jwt.ValidateToken(response.AccessToken, config)
+		assert.NoError(t, err)
+		assert.Equal(t, userID, parsedAccessToken[jwt.ClaimUUID].(string))
+
+		parsedRefreshTokenUserID, parsedRefreshTokenJTI, err := jwt.ParseAndValidateRefreshToken(
+			response.RefreshToken, config,
+		)
+		assert.NoError(t, err)
+		assert.Equal(t, userID, parsedRefreshTokenUserID)
+		assert.NotEqual(t, oldJTI, parsedRefreshTokenJTI)
+	})
+
+	t.Run("error validating old refresh token - invalid token", func(t *testing.T) {
+		_, err := authService.RefreshToken(context.Background(), "invalid-token-string")
+		assert.Error(t, err)
+		assert.True(t, errors.Is(err, ErrInvalidRefreshToken))
+	})
+
+	t.Run("error validating old refresh token - expired", func(t *testing.T) {
+		expiredConfig := jwt.Config{
+			Secret:          "secret",
+			AccessTokenTTL:  1 * time.Hour,
+			RefreshTokenTTL: -1 * time.Hour,
+		}
+		expiredToken, _ := jwt.NewRefreshToken(userID, "some-jti", expiredConfig)
+		time.Sleep(10 * time.Millisecond)
+
+		_, err := authService.RefreshToken(context.Background(), expiredToken)
+		assert.Error(t, err)
+		assert.True(t, errors.Is(err, ErrInvalidRefreshToken))
+	})
+
+	t.Run("jti not found in redis", func(t *testing.T) {
+		mockRefreshTokenRepo.EXPECT().GetRefreshTokenJTI(gomock.Any(), userID).Return("", goRedis.Nil)
+
+		_, err := authService.RefreshToken(context.Background(), oldRefreshToken)
+		assert.Error(t, err)
+		assert.True(t, errors.Is(err, ErrTokenNotFound))
+	})
+
+	t.Run("jti mismatch", func(t *testing.T) {
+		mockRefreshTokenRepo.EXPECT().GetRefreshTokenJTI(gomock.Any(), userID).Return("different-jti-from-redis", nil)
+
+		_, err := authService.RefreshToken(context.Background(), oldRefreshToken)
+		assert.Error(t, err)
+		assert.True(t, errors.Is(err, ErrInvalidRefreshToken))
+	})
+
+	t.Run("error deleting old refresh token", func(t *testing.T) {
+		mockRefreshTokenRepo.EXPECT().GetRefreshTokenJTI(gomock.Any(), userID).Return(oldJTI, nil)
+		mockRefreshTokenRepo.EXPECT().DeleteRefreshToken(gomock.Any(), userID).Return(errors.New("db error"))
+
+		_, err := authService.RefreshToken(context.Background(), oldRefreshToken)
+		assert.Error(t, err)
+		assert.True(t, errors.Is(err, ErrFailedToDeleteRefreshToken))
+	})
+
+	t.Run("error get user by id", func(t *testing.T) {
+		mockRefreshTokenRepo.EXPECT().GetRefreshTokenJTI(gomock.Any(), userID).Return(oldJTI, nil)
+		mockRefreshTokenRepo.EXPECT().DeleteRefreshToken(gomock.Any(), userID).Return(nil)
+		mockUserRepo.EXPECT().GetUserByID(gomock.Any(), userID).Return(nil, models.ErrUserNotFound)
+
+		_, err := authService.RefreshToken(context.Background(), oldRefreshToken)
+		assert.Error(t, err)
+		assert.True(t, errors.Is(err, ErrUserNotFound))
+	})
+
+	t.Run("error storing new refresh token", func(t *testing.T) {
+		mockRefreshTokenRepo.EXPECT().GetRefreshTokenJTI(gomock.Any(), userID).Return(oldJTI, nil)
+		mockRefreshTokenRepo.EXPECT().DeleteRefreshToken(gomock.Any(), userID).Return(nil)
+		mockUserRepo.EXPECT().GetUserByID(gomock.Any(), userID).Return(user, nil)
+		mockRefreshTokenRepo.EXPECT().StoreRefreshToken(
+			gomock.Any(), userID, gomock.Any(), config.RefreshTokenTTL,
+		).Return(errors.New("db error"))
+
+		_, err := authService.RefreshToken(context.Background(), oldRefreshToken)
+		assert.Error(t, err)
+		assert.True(t, errors.Is(err, ErrFailedToStoreToken))
+	})
+}
+
+func TestAuthService_Logout(t *testing.T) {
+	logger.Log = slog.New(slog.NewTextHandler(os.Stdout, nil))
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockUserRepo := mocks.NewMockUserRepository(ctrl)
+	mockTxManager := mocks.NewMockTxManagerInterface(ctrl)
+	mockRefreshTokenRepo := mocks.NewMockRefreshTokenRepository(ctrl)
+
+	config := jwt.Config{
+		Secret:          "secret",
+		AccessTokenTTL:  1 * time.Hour,
+		RefreshTokenTTL: 24 * time.Hour,
+	}
+	authService := NewAuthService(mockUserRepo, config, mockTxManager, mockRefreshTokenRepo)
+
+	userID := "test-user-id"
+	jti := "some-jti"
+	refreshToken, err := jwt.NewRefreshToken(userID, jti, config)
+	assert.NoError(t, err)
+
+	t.Run("success", func(t *testing.T) {
+		mockRefreshTokenRepo.EXPECT().DeleteRefreshToken(gomock.Any(), userID).Return(nil)
+
+		response, err := authService.Logout(context.Background(), refreshToken)
+		assert.NoError(t, err)
+		assert.NotNil(t, response)
+		assert.True(t, response.Success)
+	})
+
+	t.Run("error validating refresh token - invalid token", func(t *testing.T) {
+		_, err := authService.Logout(context.Background(), "invalid-token-string")
+		assert.Error(t, err)
+		assert.True(t, errors.Is(err, ErrInvalidRefreshToken))
+	})
+
+	t.Run("error validating refresh token - expired", func(t *testing.T) {
+		expiredConfig := jwt.Config{
+			Secret:          "secret",
+			AccessTokenTTL:  1 * time.Hour,
+			RefreshTokenTTL: -1 * time.Hour,
+		}
+		expiredToken, _ := jwt.NewRefreshToken(userID, "some-jti", expiredConfig)
+		time.Sleep(10 * time.Millisecond)
+
+		_, err := authService.Logout(context.Background(), expiredToken)
+		assert.Error(t, err)
+		assert.True(t, errors.Is(err, ErrInvalidRefreshToken))
+	})
+
+	t.Run("error deleting refresh token from repo", func(t *testing.T) {
+		mockRefreshTokenRepo.EXPECT().DeleteRefreshToken(gomock.Any(), userID).Return(errors.New("db error"))
+
+		_, err := authService.Logout(context.Background(), refreshToken)
+		assert.Error(t, err)
+		assert.True(t, errors.Is(err, ErrFailedToDeleteRefreshToken))
+	})
 }

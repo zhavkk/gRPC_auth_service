@@ -32,7 +32,7 @@ func (i *LoggingInterceptor) Unary(ctx context.Context,
 
 	duration := time.Since(start)
 	if err != nil {
-		logger.Log.Error("request failed",
+		logger.Log.Debug("request failed",
 			"method", info.FullMethod,
 			"duration", duration,
 			"error", err,

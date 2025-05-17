@@ -3,11 +3,11 @@ package auth
 import (
 	"context"
 
-	authproto "github.com/zhavkk/Auth-protobuf/gen/go/auth"
 	"google.golang.org/grpc"
 
 	"github.com/zhavkk/gRPC_auth_service/internal/models"
 	"github.com/zhavkk/gRPC_auth_service/internal/validation"
+	authproto "github.com/zhavkk/gRPC_auth_service/pkg/authpb"
 )
 
 type AuthService interface {
@@ -53,6 +53,14 @@ type AuthService interface {
 		oldPassword string,
 		newPassword string,
 	) (*models.ChangePasswordResponse, error)
+	RefreshToken(
+		ctx context.Context,
+		refreshToken string,
+	) (*models.RefreshTokenResponse, error)
+	Logout(
+		ctx context.Context,
+		refreshToken string,
+	) (*models.LogoutResponse, error)
 }
 
 type serverAPI struct {
