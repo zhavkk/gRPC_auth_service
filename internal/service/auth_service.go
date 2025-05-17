@@ -6,32 +6,51 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
+	goRedis "github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/zhavkk/gRPC_auth_service/internal/logger"
 	"github.com/zhavkk/gRPC_auth_service/internal/models"
 	"github.com/zhavkk/gRPC_auth_service/internal/pkg/jwt"
-	"github.com/zhavkk/gRPC_auth_service/internal/repository/postgres"
 	"github.com/zhavkk/gRPC_auth_service/internal/storage"
 )
 
+type RefreshTokenRepository interface {
+	StoreRefreshToken(ctx context.Context, userID string, tokenJTI string, ttl time.Duration) error
+	GetRefreshTokenJTI(ctx context.Context, userID string) (string, error)
+	DeleteRefreshToken(ctx context.Context, userID string) error
+}
+
+type UserRepository interface {
+	CreateUser(ctx context.Context, user *models.User) error
+	GetUserByID(ctx context.Context, id string) (*models.User, error)
+	GetUserByEmail(ctx context.Context, email string) (*models.User, error)
+	UpdateUser(ctx context.Context, user *models.User) error
+	UpdateUserRole(ctx context.Context, id string, role string) error
+	UpdateUserPassword(ctx context.Context, id string, hashedPassword string) error
+}
+
 type AuthService struct {
-	userRepo  postgres.UserRepository
-	jwtConfig jwt.Config
-	txManager storage.TxManagerInterface
+	userRepo         UserRepository
+	jwtConfig        jwt.Config
+	txManager        storage.TxManagerInterface
+	refreshTokenRepo RefreshTokenRepository
 }
 
 func NewAuthService(
-	userRepo postgres.UserRepository,
+	userRepo UserRepository,
 	jwtConfig jwt.Config,
 	txManager storage.TxManagerInterface,
+	refreshTokenRepo RefreshTokenRepository,
 ) *AuthService {
 	return &AuthService{
-		userRepo:  userRepo,
-		jwtConfig: jwtConfig,
-		txManager: txManager,
+		userRepo:         userRepo,
+		jwtConfig:        jwtConfig,
+		txManager:        txManager,
+		refreshTokenRepo: refreshTokenRepo,
 	}
 }
 
@@ -98,27 +117,48 @@ func (s *AuthService) Login(
 
 	user, err := s.userRepo.GetUserByEmail(ctx, email)
 	if err != nil {
-		logger.Log.Error("Failed to get user by email", "err", err)
-		return nil, fmt.Errorf("%s %w", op, ErrInvalidEmailOrPassword)
+		logger.Log.Error("Failed to get user by email", slog.String("op", op), slog.String("email", email), "err", err)
+		if errors.Is(err, models.ErrUserNotFound) {
+			return nil, fmt.Errorf("%s: %w", op, ErrInvalidEmailOrPassword)
+		}
+		return nil, fmt.Errorf("%s: %w", op, ErrFailedToGetUser)
 	}
 
 	if err := bcrypt.CompareHashAndPassword([]byte(user.PassHash), []byte(password)); err != nil {
-		logger.Log.Error("Failed to compare password", "err", err)
-		return nil, fmt.Errorf("%s %w", op, ErrInvalidEmailOrPassword)
+		logger.Log.Warn("Invalid password attempt", slog.String("op", op), slog.String("email", email), "err", err)
+		return nil, fmt.Errorf("%s: %w", op, ErrInvalidEmailOrPassword)
 	}
 
-	token, err := jwt.NewToken(*user, s.jwtConfig)
+	accessToken, err := jwt.NewAccessToken(*user, s.jwtConfig)
 	if err != nil {
-		logger.Log.Error("Failed to generate token", "err", err)
-		return nil, fmt.Errorf("%s %w", op, ErrFailedToGenerateToken)
+		logger.Log.Error("Failed to generate access token",
+			slog.String("op", op), slog.String("user_id", user.ID), "err", err)
+		return nil, fmt.Errorf("%s: %w", op, ErrFailedToGenerateToken)
 	}
-	logger.Log.With(slog.String("op", op)).Info("User logged in")
+
+	refreshTokenJTI := uuid.New().String()
+	refreshToken, err := jwt.NewRefreshToken(user.ID, refreshTokenJTI, s.jwtConfig)
+	if err != nil {
+		logger.Log.Error("Failed to generate refresh token",
+			slog.String("op", op), slog.String("user_id", user.ID), "err", err)
+		return nil, fmt.Errorf("%s: %w", op, ErrFailedToGenerateToken)
+	}
+
+	err = s.refreshTokenRepo.StoreRefreshToken(ctx, user.ID, refreshTokenJTI, s.jwtConfig.RefreshTokenTTL)
+	if err != nil {
+		logger.Log.Error("Failed to store refresh token JTI in Redis",
+			slog.String("op", op), slog.String("user_id", user.ID), "err", err)
+		return nil, fmt.Errorf("%s: %w", op, ErrFailedToStoreToken)
+	}
+
+	logger.Log.Info("User logged in successfully", slog.String("op", op), slog.String("user_id", user.ID))
 	return &models.LoginResponse{
-		ID:       user.ID,
-		Username: user.Username,
-		Email:    user.Email,
-		Role:     user.Role,
-		Token:    token,
+		ID:           user.ID,
+		Username:     user.Username,
+		Email:        user.Email,
+		Role:         user.Role,
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
 	}, nil
 }
 
@@ -284,4 +324,102 @@ func isValidRole(role string) bool {
 		"artist": true,
 	}
 	return validRoles[role]
+}
+
+func (s *AuthService) RefreshToken(
+	ctx context.Context,
+	oldRefreshTokenString string,
+) (*models.RefreshTokenResponse, error) {
+	const op = "auth_service.RefreshToken"
+
+	userID, jtiFromToken, err := jwt.ParseAndValidateRefreshToken(oldRefreshTokenString, s.jwtConfig)
+	if err != nil {
+		logger.Log.Warn("Invalid refresh token received for refresh", "op", op, "err", err)
+		return nil, fmt.Errorf("%s: %w", op, ErrInvalidRefreshToken)
+	}
+
+	jtiFromRedis, err := s.refreshTokenRepo.GetRefreshTokenJTI(ctx, userID)
+	if err != nil {
+		if errors.Is(err, goRedis.Nil) {
+			logger.Log.Warn("Refresh token JTI not found in Redis (token revoked or expired)",
+				slog.String("op", op), slog.String("user_id", userID))
+			return nil, fmt.Errorf("%s: %w", op, ErrTokenNotFound)
+		}
+		logger.Log.Error("Failed to get refresh token JTI from Redis", "op", op, "user_id", userID, "err", err)
+		return nil, fmt.Errorf("%s: %w", op, ErrFailedToGetRefreshTokenJTI)
+	}
+
+	if jtiFromRedis != jtiFromToken {
+		logger.Log.Warn("JTI mismatch for refresh token (potential replay attack or old token)",
+			slog.String("op", op), slog.String("user_id", userID))
+		return nil, fmt.Errorf("%s: %w", op, ErrInvalidRefreshToken)
+	}
+
+	err = s.refreshTokenRepo.DeleteRefreshToken(ctx, userID)
+	if err != nil {
+		logger.Log.Error("Failed to delete old refresh token JTI from Redis during refresh",
+			slog.String("op", op), slog.String("user_id", userID), "err", err)
+		return nil, fmt.Errorf("%s: %w", op, ErrFailedToDeleteRefreshToken)
+	}
+
+	user, err := s.userRepo.GetUserByID(ctx, userID)
+	if err != nil {
+		logger.Log.Error("Failed to get user for new token generation during refresh",
+			slog.String("op", op), slog.String("user_id", userID), "err", err)
+		if errors.Is(err, models.ErrUserNotFound) {
+			return nil, fmt.Errorf("%s: %w", op, ErrUserNotFound)
+		}
+		return nil, fmt.Errorf("%s: %w", op, ErrFailedToGetUser)
+	}
+
+	newAccessToken, err := jwt.NewAccessToken(*user, s.jwtConfig)
+	if err != nil {
+		logger.Log.Error("Failed to generate new access token during refresh", "op", op, "user_id", user.ID, "err", err)
+		return nil, fmt.Errorf("%s: %w", op, ErrFailedToGenerateToken)
+	}
+
+	newJTI := uuid.New().String()
+	newRefreshToken, err := jwt.NewRefreshToken(userID, newJTI, s.jwtConfig)
+	if err != nil {
+		logger.Log.Error("Failed to generate new refresh token during refresh",
+			slog.String("op", op), slog.String("user_id", user.ID), "err", err)
+		return nil, fmt.Errorf("%s: %w", op, ErrFailedToGenerateToken)
+	}
+
+	err = s.refreshTokenRepo.StoreRefreshToken(ctx, userID, newJTI, s.jwtConfig.RefreshTokenTTL)
+	if err != nil {
+		logger.Log.Error("Failed to store new refresh token JTI in Redis during refresh",
+			slog.String("op", op), slog.String("user_id", user.ID), "err", err)
+		return nil, fmt.Errorf("%s: %w", op, ErrFailedToStoreToken)
+	}
+
+	logger.Log.Info("Token refreshed successfully", "op", op, "user_id", userID)
+	return &models.RefreshTokenResponse{
+		AccessToken:  newAccessToken,
+		RefreshToken: newRefreshToken,
+	}, nil
+}
+
+func (s *AuthService) Logout(
+	ctx context.Context,
+	refreshToken string,
+) (*models.LogoutResponse, error) {
+	const op = "auth_service.Logout"
+
+	userID, _, err := jwt.ParseAndValidateRefreshToken(refreshToken, s.jwtConfig)
+	if err != nil {
+		logger.Log.Warn("Invalid refresh token received for logout", "op", op, "err", err)
+		return nil, fmt.Errorf("%s: %w", op, ErrInvalidRefreshToken)
+	}
+
+	err = s.refreshTokenRepo.DeleteRefreshToken(ctx, userID)
+	if err != nil {
+		logger.Log.Error("Failed to delete refresh token from Redis", "op", op, "user_id", userID, "err", err)
+		return nil, fmt.Errorf("%s: %w", op, ErrFailedToDeleteRefreshToken)
+	}
+
+	return &models.LogoutResponse{
+		Success: true,
+		Message: "Logout successful",
+	}, nil
 }

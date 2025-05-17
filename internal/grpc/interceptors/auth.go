@@ -3,6 +3,8 @@ package interceptors
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"strings"
 
 	"google.golang.org/grpc"
@@ -10,14 +12,15 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
-	"github.com/zhavkk/gRPC_auth_service/internal/pkg/jwt"
+	"github.com/zhavkk/gRPC_auth_service/internal/logger"
+	pkgjwt "github.com/zhavkk/gRPC_auth_service/internal/pkg/jwt"
 )
 
 type AuthInterceptor struct {
-	jwtConfig jwt.Config
+	jwtConfig pkgjwt.Config
 }
 
-func NewAuthInterceptor(jwtConfig jwt.Config) grpc.UnaryServerInterceptor {
+func NewAuthInterceptor(jwtConfig pkgjwt.Config) grpc.UnaryServerInterceptor {
 	return (&AuthInterceptor{jwtConfig: jwtConfig}).Unary
 }
 
@@ -28,10 +31,9 @@ var publicMethods = map[string]bool{
 
 type contextKey string
 
-const claimsKey contextKey = "claims"
+const ClaimsKey = contextKey("claims")
 
 var (
-	ErrInvalidToken              = status.Error(codes.Unauthenticated, "invalid token")
 	ErrInvalidTokenFormat        = status.Error(codes.Unauthenticated, "invalid token format")
 	ErrInvalidTokenHeader        = status.Error(codes.Unauthenticated, "invalid token header")
 	ErrInvalidTokenMetadata      = status.Error(codes.Unauthenticated, "invalid token metadata")
@@ -49,25 +51,40 @@ func (i *AuthInterceptor) Unary(ctx context.Context,
 
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
+		logger.Log.Warn("AuthInterceptor: Failed to get metadata from context")
 		return nil, ErrInvalidTokenMetadata
 	}
 
 	authHeader := md.Get("authorization")
 	if len(authHeader) == 0 {
+		logger.Log.Warn("AuthInterceptor: Authorization header not found")
 		return nil, ErrInvalidTokenAuthorization
 	}
 
 	tokenString := authHeader[0]
 	if !strings.HasPrefix(tokenString, "Bearer ") {
+		logger.Log.Warn("AuthInterceptor: Authorization header does not have Bearer prefix", "header", tokenString)
 		return nil, ErrInvalidTokenFormat
 	}
 
 	tokenString = strings.TrimPrefix(tokenString, "Bearer ")
+	logger.Log.Debug("AuthInterceptor: Attempting to validate token", "token", tokenString)
 
-	claims, err := jwt.ValidateToken(tokenString, i.jwtConfig)
+	claims, err := pkgjwt.ValidateToken(tokenString, i.jwtConfig)
 	if err != nil {
-		return nil, ErrInvalidToken
+		logger.Log.Warn("AuthInterceptor: pkgjwt.ValidateToken failed", "error", err, "token", tokenString)
+
+		if errors.Is(err, pkgjwt.ErrTokenExpired) {
+			return nil, status.Error(codes.Unauthenticated, "access token expired")
+		}
+		if errors.Is(err, pkgjwt.ErrInvalidToken) {
+			return nil, status.Error(codes.Unauthenticated, "access token is invalid (specific)")
+		}
+
+		return nil, status.Error(codes.Unauthenticated, "token validation error: "+err.Error())
 	}
-	ctx = context.WithValue(ctx, claimsKey, claims)
+
+	logger.Log.Debug("AuthInterceptor: Token validated successfully", slog.Any("claims", claims))
+	ctx = context.WithValue(ctx, ClaimsKey, claims)
 	return handler(ctx, req)
 }

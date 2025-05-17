@@ -19,7 +19,6 @@ var (
 	ErrDBNotConnected      = errors.New("db is not connected")
 )
 
-// db_url
 func NewStorage(ctx context.Context, cfg *config.Config) (*Storage, error) {
 
 	dsn := cfg.DBURL

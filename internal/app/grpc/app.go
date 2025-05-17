@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"os"
-	"time"
 
 	"google.golang.org/grpc"
 
@@ -20,13 +18,8 @@ type App struct {
 	port       int
 }
 
-func New(port int) *App {
-	jwtConfig := jwt.Config{
-		Secret:   os.Getenv("JWT_SECRET"),
-		TokenTTL: 1 * time.Hour,
-	}
-
-	authInterceptor := interceptors.NewAuthInterceptor(jwtConfig)
+func New(port int, jwtCfg jwt.Config) *App {
+	authInterceptor := interceptors.NewAuthInterceptor(jwtCfg)
 	loggingInterceptor := interceptors.NewLoggingInterceptor()
 
 	gRPCServer := grpc.NewServer(

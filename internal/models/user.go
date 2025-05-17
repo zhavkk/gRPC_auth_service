@@ -22,11 +22,22 @@ type RegisterResponse struct {
 }
 
 type LoginResponse struct {
-	ID       string
-	Username string
-	Email    string
-	Role     string
-	Token    string
+	ID           string
+	Username     string
+	Email        string
+	Role         string
+	AccessToken  string
+	RefreshToken string
+}
+
+type LogoutResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message,omitempty"`
+}
+
+type RefreshTokenResponse struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
 }
 
 type SetUserRoleResponse struct {

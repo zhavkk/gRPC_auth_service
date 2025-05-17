@@ -12,27 +12,18 @@ import (
 	"github.com/zhavkk/gRPC_auth_service/internal/storage"
 )
 
-type UserRepository interface {
-	CreateUser(ctx context.Context, user *models.User) error
-	GetUserByID(ctx context.Context, id string) (*models.User, error)
-	GetUserByEmail(ctx context.Context, email string) (*models.User, error)
-	UpdateUser(ctx context.Context, user *models.User) error
-	UpdateUserRole(ctx context.Context, id string, role string) error
-	UpdateUserPassword(ctx context.Context, id string, hashedPassword string) error
-}
-
-type UserRepositiryPostgres struct {
+type UserRepositoryPostgres struct {
 	storage *storage.Storage
 }
 
 func NewUserRepository(storage *storage.Storage,
-) *UserRepositiryPostgres {
-	return &UserRepositiryPostgres{
+) *UserRepositoryPostgres {
+	return &UserRepositoryPostgres{
 		storage: storage,
 	}
 }
 
-func (r *UserRepositiryPostgres) CreateUser(ctx context.Context,
+func (r *UserRepositoryPostgres) CreateUser(ctx context.Context,
 	user *models.User,
 ) error {
 	logger.Log.Debug("Creating user... ", "user", user)
@@ -76,7 +67,7 @@ func (r *UserRepositiryPostgres) CreateUser(ctx context.Context,
 	return nil
 }
 
-func (r *UserRepositiryPostgres) GetUserByID(ctx context.Context,
+func (r *UserRepositoryPostgres) GetUserByID(ctx context.Context,
 	id string,
 ) (*models.User, error) {
 	logger.Log.Debug("Getting user by id... ", "id", id)
@@ -129,7 +120,7 @@ func (r *UserRepositiryPostgres) GetUserByID(ctx context.Context,
 	return user, nil
 }
 
-func (r *UserRepositiryPostgres) GetUserByEmail(ctx context.Context,
+func (r *UserRepositoryPostgres) GetUserByEmail(ctx context.Context,
 	email string,
 ) (*models.User, error) {
 	logger.Log.Debug("Getting user by email... ", "email", email)
@@ -186,7 +177,7 @@ func (r *UserRepositiryPostgres) GetUserByEmail(ctx context.Context,
 	return user, nil
 }
 
-func (r *UserRepositiryPostgres) UpdateUser(ctx context.Context,
+func (r *UserRepositoryPostgres) UpdateUser(ctx context.Context,
 	user *models.User,
 ) error {
 	logger.Log.Debug("Updating user", "user", user)
@@ -230,7 +221,7 @@ func (r *UserRepositiryPostgres) UpdateUser(ctx context.Context,
 	return nil
 }
 
-func (r *UserRepositiryPostgres) UpdateUserRole(ctx context.Context,
+func (r *UserRepositoryPostgres) UpdateUserRole(ctx context.Context,
 	id string,
 	role string,
 ) error {
@@ -261,7 +252,7 @@ func (r *UserRepositiryPostgres) UpdateUserRole(ctx context.Context,
 	return nil
 }
 
-func (r *UserRepositiryPostgres) UpdateUserPassword(ctx context.Context,
+func (r *UserRepositoryPostgres) UpdateUserPassword(ctx context.Context,
 	id string,
 	hashedPassword string,
 ) error {

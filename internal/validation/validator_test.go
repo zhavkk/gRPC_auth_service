@@ -3,7 +3,7 @@ package validation
 import (
 	"testing"
 
-	"github.com/zhavkk/Auth-protobuf/gen/go/auth"
+	auth "github.com/zhavkk/gRPC_auth_service/pkg/authpb"
 )
 
 func TestValidateRegisterRequest(t *testing.T) {

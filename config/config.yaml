@@ -1,9 +1,21 @@
 env: local
 
-db_url: postgres://testuser:testpass@localhost:5433/testdb?sslmode=disable
+db_url: postgres://testuser:testpass@localhost:5432/auth_db?sslmode=disable
   
-token_ttl: 1h
+access_token_ttl: 1h
+refresh_token_ttl: 24h
 
 grpc_server:
   port: 50051
   timeout: 10h
+
+jwt_secret: "secret"
+
+redis:
+  host: localhost
+  port: 6379
+  password: ""
+  db: 0
+  dial_timeout: 5s
+  read_timeout: 3s
+  write_timeout: 3s
