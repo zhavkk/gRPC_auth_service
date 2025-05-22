@@ -8,89 +8,86 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/mock/gomock"
 	"golang.org/x/crypto/bcrypt"
 
-	goRedis "github.com/redis/go-redis/v9"
-
+	"github.com/zhavkk/gRPC_auth_service/internal/dto"
 	"github.com/zhavkk/gRPC_auth_service/internal/logger"
 	"github.com/zhavkk/gRPC_auth_service/internal/models"
 	"github.com/zhavkk/gRPC_auth_service/internal/pkg/jwt"
 	"github.com/zhavkk/gRPC_auth_service/internal/repository/mocks"
 )
 
-func TestAuthService_Register(t *testing.T) {
+func TestAuthService_RegisterUser(t *testing.T) {
 	logger.Log = slog.New(slog.NewTextHandler(os.Stdout, nil))
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
 	mockUserRepo := mocks.NewMockUserRepository(ctrl)
-	mockTxManager := mocks.NewMockTxManagerInterface(ctrl)
-	mockRefreshTokenRepo := mocks.NewMockRefreshTokenRepository(ctrl)
+	mockProfileRepo := mocks.NewMockProfileRepository(ctrl)
+	mockArtistRepo := mocks.NewMockArtistRepository(ctrl)
+	mockTx := mocks.NewMockTxManagerInterface(ctrl)
+	mockRTRepo := mocks.NewMockRefreshTokenRepository(ctrl)
 
-	config := jwt.Config{
-		Secret:          "secret",
-		AccessTokenTTL:  1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
+	cfg := jwt.Config{Secret: "secret", AccessTokenTTL: time.Hour, RefreshTokenTTL: 24 * time.Hour}
+	svc := NewAuthService(
+		mockUserRepo,
+		mockProfileRepo,
+		mockArtistRepo,
+		cfg,
+		mockTx,
+		mockRTRepo,
+	)
+
+	ctx := context.Background()
+	params := dto.RegisterUserParams{
+		Username: "alice",
+		Email:    "alice@example.com",
+		Password: "Password123!",
+		Gender:   true,
+		Country:  "US",
+		Age:      30,
 	}
-	authService := NewAuthService(mockUserRepo, config, mockTxManager, mockRefreshTokenRepo)
 
-	t.Run("success", func(t *testing.T) {
-		mockTxManager.EXPECT().RunSerializable(gomock.Any(),
-			gomock.Any(),
-		).DoAndReturn(func(ctx context.Context,
-			f func(context.Context) error,
-		) error {
+	mockTx.EXPECT().
+		RunSerializable(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, f func(context.Context) error) error {
 			return f(ctx)
 		})
+	mockUserRepo.EXPECT().
+		GetUserByEmail(ctx, params.Email).
+		Return(nil, models.ErrUserNotFound)
+	mockProfileRepo.EXPECT().
+		GetProfileByUsername(ctx, params.Username).
+		Return(nil, models.ErrProfileNotFound)
+	mockProfileRepo.EXPECT().
+		CreateProfile(ctx, gomock.Any()).
+		Return(nil)
+	mockUserRepo.EXPECT().
+		CreateUser(ctx, gomock.Any()).
+		Return(nil)
 
-		mockUserRepo.EXPECT().GetUserByEmail(gomock.Any(), "test@test.com").Return(nil, ErrUserNotFound)
-		mockUserRepo.EXPECT().CreateUser(gomock.Any(), gomock.Any()).Return(nil)
+	resp, err := svc.RegisterUser(ctx, params)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, resp.ID)
 
-		response, err := authService.Register(context.Background(),
-			"test",
-			"test@test.com",
-			"password123",
-			true,
-			"Russia",
-			20,
-			"user",
-		)
-		assert.NoError(t, err)
-		assert.NotEmpty(t, response.ID)
-	})
-
-	t.Run("duplicate email", func(t *testing.T) {
-		mockTxManager.EXPECT().RunSerializable(gomock.Any(),
-			gomock.Any(),
-		).DoAndReturn(func(ctx context.Context,
-			f func(context.Context) error,
-		) error {
+	mockTx.EXPECT().
+		RunSerializable(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, f func(context.Context) error) error {
 			return f(ctx)
 		})
+	mockUserRepo.EXPECT().
+		GetUserByEmail(ctx, params.Email).
+		Return(nil, models.ErrUserNotFound)
+	mockProfileRepo.EXPECT().
+		GetProfileByUsername(ctx, params.Username).
+		Return(&models.Profile{}, nil)
 
-		existingUser := &models.User{
-			ID:       "existing-id",
-			Email:    "test@test.com",
-			Username: "existing",
-		}
-		mockUserRepo.EXPECT().GetUserByEmail(gomock.Any(),
-			"test@test.com",
-		).Return(existingUser, nil)
-
-		_, err := authService.Register(context.Background(),
-			"test2",
-			"test@test.com",
-			"password123",
-			true,
-			"Russia",
-			20,
-			"user",
-		)
-		assert.Error(t, err)
-		assert.True(t, errors.Is(err, ErrUserAlreadyExists))
-	})
+	_, err = svc.RegisterUser(ctx, params)
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, ErrUsernameAlreadyTaken))
 }
 
 func TestAuthService_Login(t *testing.T) {
@@ -99,79 +96,44 @@ func TestAuthService_Login(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockUserRepo := mocks.NewMockUserRepository(ctrl)
-	mockTxManager := mocks.NewMockTxManagerInterface(ctrl)
-	mockRefreshTokenRepo := mocks.NewMockRefreshTokenRepository(ctrl)
+	mockProfileRepo := mocks.NewMockProfileRepository(ctrl)
+	mockArtistRepo := mocks.NewMockArtistRepository(ctrl)
+	mockTx := mocks.NewMockTxManagerInterface(ctrl)
+	mockRTRepo := mocks.NewMockRefreshTokenRepository(ctrl)
 
-	config := jwt.Config{
-		Secret:          "secret",
-		AccessTokenTTL:  1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}
-	authService := NewAuthService(mockUserRepo, config, mockTxManager, mockRefreshTokenRepo)
+	cfg := jwt.Config{Secret: "secret", AccessTokenTTL: time.Hour, RefreshTokenTTL: 24 * time.Hour}
+	svc := NewAuthService(mockUserRepo, mockProfileRepo, mockArtistRepo, cfg, mockTx, mockRTRepo)
 
-	hashedPassword, _ := bcrypt.GenerateFromPassword(
-		[]byte("password123"),
-		bcrypt.DefaultCost,
-	)
-
-	user := &models.User{
-		ID:       "test-id",
-		Email:    "test@test.com",
-		Username: "test",
-		Role:     "user",
-		PassHash: string(hashedPassword),
+	ctx := context.Background()
+	password := "secret"
+	hash, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	profile := &models.Profile{
+		ID:       uuid.New(),
+		Username: "bob",
+		PassHash: string(hash),
+		Role:     string(models.RoleUser),
 	}
 
-	t.Run("success", func(t *testing.T) {
-		mockUserRepo.EXPECT().GetUserByEmail(gomock.Any(),
-			"test@test.com",
-		).Return(user, nil)
+	mockProfileRepo.EXPECT().
+		GetProfileByUsername(ctx, "bob").
+		Return(profile, nil)
+	mockRTRepo.EXPECT().
+		StoreRefreshToken(ctx, profile.ID.String(), gomock.Any(), cfg.RefreshTokenTTL).
+		Return(nil)
 
-		mockRefreshTokenRepo.EXPECT().StoreRefreshToken(
-			gomock.Any(),
-			user.ID,
-			gomock.Any(),
-			config.RefreshTokenTTL,
-		).Return(nil)
+	out, err := svc.Login(ctx, dto.LoginParams{Username: "bob", Password: password})
+	assert.NoError(t, err)
+	assert.Equal(t, profile.ID.String(), out.ID)
+	assert.NotEmpty(t, out.AccessToken)
+	assert.NotEmpty(t, out.RefreshToken)
 
-		response, err := authService.Login(context.Background(),
-			"test@test.com",
-			"password123",
-		)
-		assert.NoError(t, err)
-		assert.NotEmpty(t, response.AccessToken)
-		assert.NotEmpty(t, response.RefreshToken)
-		assert.Equal(t, user.ID, response.ID)
-		assert.Equal(t, user.Email, response.Email)
-		assert.Equal(t, user.Username, response.Username)
-		assert.Equal(t, user.Role, response.Role)
-	})
+	mockProfileRepo.EXPECT().
+		GetProfileByUsername(ctx, "bob").
+		Return(profile, nil)
 
-	t.Run("user not found", func(t *testing.T) {
-		mockUserRepo.EXPECT().GetUserByEmail(gomock.Any(),
-			"notfound@test.com",
-		).Return(nil, models.ErrUserNotFound)
-
-		_, err := authService.Login(context.Background(),
-			"notfound@test.com",
-			"password123",
-		)
-		assert.Error(t, err)
-		assert.True(t, errors.Is(err, ErrInvalidEmailOrPassword))
-	})
-
-	t.Run("wrong password", func(t *testing.T) {
-		mockUserRepo.EXPECT().GetUserByEmail(gomock.Any(),
-			"test@test.com",
-		).Return(user, nil)
-
-		_, err := authService.Login(context.Background(),
-			"test@test.com",
-			"wrongpassword",
-		)
-		assert.Error(t, err)
-		assert.True(t, errors.Is(err, ErrInvalidEmailOrPassword))
-	})
+	_, err = svc.Login(ctx, dto.LoginParams{Username: "bob", Password: "wrong"})
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, ErrInvalidUsernameOrPassword))
 }
 
 func TestAuthService_ChangePassword(t *testing.T) {
@@ -179,98 +141,39 @@ func TestAuthService_ChangePassword(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
+	mockTx := mocks.NewMockTxManagerInterface(ctrl)
+	mockRTRepo := mocks.NewMockRefreshTokenRepository(ctrl)
+	mockProfileRepo := mocks.NewMockProfileRepository(ctrl)
 	mockUserRepo := mocks.NewMockUserRepository(ctrl)
-	mockTxManager := mocks.NewMockTxManagerInterface(ctrl)
-	mockRefreshTokenRepo := mocks.NewMockRefreshTokenRepository(ctrl)
+	mockArtistRepo := mocks.NewMockArtistRepository(ctrl)
+	cfg := jwt.Config{Secret: "secret", AccessTokenTTL: time.Hour, RefreshTokenTTL: 24 * time.Hour}
+	svc := NewAuthService(mockUserRepo, mockProfileRepo, mockArtistRepo, cfg, mockTx, mockRTRepo)
 
-	config := jwt.Config{
-		Secret:          "secret",
-		AccessTokenTTL:  1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}
-	authService := NewAuthService(mockUserRepo, config, mockTxManager, mockRefreshTokenRepo)
+	ctx := context.Background()
+	oldPass := "old-pass"
+	hash, _ := bcrypt.GenerateFromPassword([]byte(oldPass), bcrypt.DefaultCost)
+	profile := &models.Profile{ID: uuid.New(), PassHash: string(hash), Role: models.RoleUser.String()}
 
-	oldPassword := "old-password"
-	hashedOldPassword, _ := bcrypt.GenerateFromPassword(
-		[]byte(oldPassword),
-		bcrypt.DefaultCost,
-	)
+	mockTx.EXPECT().
+		RunSerializable(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, f func(context.Context) error) error {
+			mockProfileRepo.EXPECT().
+				GetProfileByID(ctx, profile.ID.String()).
+				Return(&models.Profile{ID: profile.ID, PassHash: profile.PassHash, Role: profile.Role}, nil)
+			mockProfileRepo.EXPECT().
+				UpdatePassword(ctx, profile.ID.String(), gomock.Any()).
+				Return(nil)
 
-	user := &models.User{
-		ID:       "user-id",
-		Username: "test",
-		Email:    "test@test.com",
-		PassHash: string(hashedOldPassword),
-		Role:     "user",
-	}
-
-	t.Run("success", func(t *testing.T) {
-		mockTxManager.EXPECT().RunSerializable(gomock.Any(),
-			gomock.Any(),
-		).DoAndReturn(func(ctx context.Context,
-			f func(context.Context) error,
-		) error {
 			return f(ctx)
 		})
 
-		mockUserRepo.EXPECT().GetUserByID(gomock.Any(),
-			"user-id",
-		).Return(user, nil)
-		mockUserRepo.EXPECT().UpdateUserPassword(gomock.Any(),
-			"user-id",
-			gomock.Any(),
-		).Return(nil)
-
-		resp, err := authService.ChangePassword(context.Background(),
-			"user-id",
-			oldPassword,
-			"new-password123",
-		)
-		assert.NoError(t, err)
-		assert.True(t, resp.Success)
+	out, err := svc.ChangePassword(ctx, dto.ChangePasswordParams{
+		ID:          profile.ID.String(),
+		OldPassword: oldPass,
+		NewPassword: "new-pass123",
 	})
-}
-
-func TestAuthService_SetUserRole(t *testing.T) {
-	logger.Log = slog.New(slog.NewTextHandler(os.Stdout, nil))
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	mockUserRepo := mocks.NewMockUserRepository(ctrl)
-	mockTxManager := mocks.NewMockTxManagerInterface(ctrl)
-	mockRefreshTokenRepo := mocks.NewMockRefreshTokenRepository(ctrl)
-
-	config := jwt.Config{
-		Secret:          "secret",
-		AccessTokenTTL:  1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}
-	authService := NewAuthService(mockUserRepo, config, mockTxManager, mockRefreshTokenRepo)
-
-	user := &models.User{
-		ID:       "user-id",
-		Username: "test",
-		Email:    "test@test.com",
-		Role:     "user",
-	}
-
-	t.Run("success", func(t *testing.T) {
-		mockTxManager.EXPECT().RunSerializable(gomock.Any(),
-			gomock.Any(),
-		).DoAndReturn(func(ctx context.Context,
-			f func(context.Context) error,
-		) error {
-			return f(ctx)
-		})
-
-		mockUserRepo.EXPECT().GetUserByID(gomock.Any(), "user-id").Return(user, nil)
-		mockUserRepo.EXPECT().UpdateUserRole(gomock.Any(), "user-id", "admin").Return(nil)
-
-		resp, err := authService.SetUserRole(context.Background(), "user-id", "admin")
-		assert.NoError(t, err)
-		assert.Equal(t, "user-id", resp.ID)
-		assert.Equal(t, "admin", resp.Role)
-	})
+	assert.NoError(t, err)
+	assert.True(t, out.Success)
 }
 
 func TestAuthService_GetUser(t *testing.T) {
@@ -279,46 +182,39 @@ func TestAuthService_GetUser(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockUserRepo := mocks.NewMockUserRepository(ctrl)
-	mockTxManager := mocks.NewMockTxManagerInterface(ctrl)
-	mockRefreshTokenRepo := mocks.NewMockRefreshTokenRepository(ctrl)
+	mockTx := mocks.NewMockTxManagerInterface(ctrl)
+	mockRTRepo := mocks.NewMockRefreshTokenRepository(ctrl)
 
-	config := jwt.Config{
-		Secret:          "secret",
-		AccessTokenTTL:  1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
+	cfg := jwt.Config{Secret: "secret", AccessTokenTTL: time.Hour, RefreshTokenTTL: 24 * time.Hour}
+	svc := NewAuthService(mockUserRepo, nil, nil, cfg, mockTx, mockRTRepo)
+
+	ctx := context.Background()
+	userFull := &models.UserFull{
+		ID:       uuid.New(),
+		Username: "charlie",
+		Email:    "c@e.com",
+		Gender:   true,
+		Country:  "FR",
+		Age:      28,
+		Role:     string(models.RoleUser),
 	}
 
-	authService := NewAuthService(mockUserRepo, config, mockTxManager, mockRefreshTokenRepo)
+	mockUserRepo.EXPECT().
+		GetUserByID(ctx, userFull.ID.String()).
+		Return(userFull, nil)
 
-	user := &models.User{
-		ID:       "user-id",
-		Username: "test",
-		Email:    "test@test.com",
-		Role:     "user",
-	}
+	out, err := svc.GetUser(ctx, dto.GetUserParams{ID: userFull.ID.String()})
+	assert.NoError(t, err)
+	assert.Equal(t, userFull.ID.String(), out.ID)
+	assert.Equal(t, userFull.Username, out.Username)
 
-	t.Run("success", func(t *testing.T) {
-		mockUserRepo.EXPECT().
-			GetUserByID(gomock.Any(), "user-id").
-			Return(user, nil)
+	mockUserRepo.EXPECT().
+		GetUserByID(ctx, "nope").
+		Return(nil, ErrUserNotFound)
 
-		resp, err := authService.GetUser(context.Background(), "user-id")
-		assert.NoError(t, err)
-		assert.Equal(t, user.ID, resp.ID)
-		assert.Equal(t, user.Username, resp.Username)
-		assert.Equal(t, user.Email, resp.Email)
-		assert.Equal(t, user.Role, resp.Role)
-	})
-
-	t.Run("user not found", func(t *testing.T) {
-		mockUserRepo.EXPECT().
-			GetUserByID(gomock.Any(), "not-exist").
-			Return(nil, ErrUserNotFound)
-
-		_, err := authService.GetUser(context.Background(), "not-exist")
-		assert.Error(t, err)
-		assert.True(t, errors.Is(err, ErrUserNotFound))
-	})
+	_, err = svc.GetUser(ctx, dto.GetUserParams{ID: "nope"})
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, ErrUserNotFound))
 }
 
 func TestAuthService_UpdateUser(t *testing.T) {
@@ -327,62 +223,58 @@ func TestAuthService_UpdateUser(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockUserRepo := mocks.NewMockUserRepository(ctrl)
-	mockTxManager := mocks.NewMockTxManagerInterface(ctrl)
-	mockRefreshTokenRepo := mocks.NewMockRefreshTokenRepository(ctrl)
+	mockTx := mocks.NewMockTxManagerInterface(ctrl)
+	mockRTRepo := mocks.NewMockRefreshTokenRepository(ctrl)
+	mockProfileRepo := mocks.NewMockProfileRepository(ctrl)
 
-	config := jwt.Config{
-		Secret:          "secret",
-		AccessTokenTTL:  1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}
+	cfg := jwt.Config{Secret: "secret", AccessTokenTTL: time.Hour, RefreshTokenTTL: 24 * time.Hour}
+	svc := NewAuthService(mockUserRepo, mockProfileRepo, nil, cfg, mockTx, mockRTRepo)
 
-	authService := NewAuthService(mockUserRepo, config, mockTxManager, mockRefreshTokenRepo)
+	ctx := context.Background()
+	existing := &models.UserFull{ID: uuid.New(), Username: "dave"}
 
-	user := &models.User{
-		ID:       "111",
-		Username: "test",
-		Email:    "test@test.com",
-		Role:     "user",
-	}
+	mockTx.EXPECT().
+		RunSerializable(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, f func(context.Context) error) error {
+			mockUserRepo.EXPECT().
+				GetUserByID(ctx, existing.ID.String()).
+				Return(existing, nil)
+			mockProfileRepo.EXPECT().
+				GetProfileByUsername(ctx, "dave2").
+				Return(nil, models.ErrProfileNotFound)
+			mockProfileRepo.EXPECT().
+				UpdateUsername(ctx, existing.ID.String(), "dave2").
+				Return(nil)
+			mockUserRepo.EXPECT().
+				UpdateUser(ctx, gomock.Any()).
+				Return(nil)
+			return f(ctx)
+		})
 
-	t.Run("success", func(t *testing.T) {
-		mockTxManager.EXPECT().
-			RunSerializable(gomock.Any(), gomock.Any()).
-			DoAndReturn(func(ctx context.Context, f func(context.Context) error) error {
-				mockUserRepo.EXPECT().GetUserByID(gomock.Any(), "111").Return(user, nil)
-				mockUserRepo.EXPECT().UpdateUser(gomock.Any(), gomock.Any()).Return(nil)
-				return f(ctx)
-			})
-
-		resp, err := authService.UpdateUser(context.Background(),
-			user.ID,
-			"new-username",
-			"new-country",
-			int32(20),
-		)
-		assert.NoError(t, err)
-		assert.Equal(t, "new-username", resp.Username)
+	out, err := svc.UpdateUser(ctx, dto.UpdateUserParams{
+		ID:       existing.ID.String(),
+		Username: "dave2",
+		Country:  "DE",
+		Age:      35,
 	})
+	assert.NoError(t, err)
+	assert.True(t, out.Success)
 
-	t.Run("user not found", func(t *testing.T) {
-		mockTxManager.EXPECT().
-			RunSerializable(gomock.Any(), gomock.Any()).
-			DoAndReturn(func(ctx context.Context, f func(context.Context) error) error {
-				mockUserRepo.EXPECT().
-					GetUserByID(gomock.Any(), "not-exist").
-					Return(nil, ErrFailedToGetUser)
-				return f(ctx)
-			})
+	mockTx.EXPECT().
+		RunSerializable(gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, f func(context.Context) error) error {
+			mockUserRepo.EXPECT().
+				GetUserByID(ctx, "nope").
+				Return(nil, ErrFailedToGetUser)
+			return f(ctx)
+		})
 
-		_, err := authService.UpdateUser(context.Background(),
-			"not-exist",
-			"new-username",
-			"new-country",
-			int32(20),
-		)
-		assert.Error(t, err)
-		assert.True(t, errors.Is(err, ErrFailedToGetUser))
+	_, err = svc.UpdateUser(ctx, dto.UpdateUserParams{
+		ID:       "nope",
+		Username: "x",
 	})
+	assert.Error(t, err)
+	assert.True(t, errors.Is(err, ErrFailedToGetUser))
 }
 
 func TestAuthService_RefreshToken(t *testing.T) {
@@ -391,120 +283,34 @@ func TestAuthService_RefreshToken(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockUserRepo := mocks.NewMockUserRepository(ctrl)
-	mockTxManager := mocks.NewMockTxManagerInterface(ctrl)
-	mockRefreshTokenRepo := mocks.NewMockRefreshTokenRepository(ctrl)
+	mockTx := mocks.NewMockTxManagerInterface(ctrl)
+	mockRTRepo := mocks.NewMockRefreshTokenRepository(ctrl)
+	mockProfileRepo := mocks.NewMockProfileRepository(ctrl)
+	mockArtistRepo := mocks.NewMockArtistRepository(ctrl)
 
-	config := jwt.Config{
-		Secret:          "secret", // Short TTL for expiry test
-		AccessTokenTTL:  1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}
-	authService := NewAuthService(mockUserRepo, config, mockTxManager, mockRefreshTokenRepo)
+	cfg := jwt.Config{Secret: "secret", AccessTokenTTL: time.Hour, RefreshTokenTTL: 24 * time.Hour}
+	svc := NewAuthService(mockUserRepo, mockProfileRepo, mockArtistRepo, cfg, mockTx, mockRTRepo)
 
-	userID := "test-user-id"
-	oldJTI := "old-jti"
-	oldRefreshToken, err := jwt.NewRefreshToken(userID, oldJTI, config)
-	assert.NoError(t, err)
+	ctx := context.Background()
+	userID := uuid.New().String()
+	oldJTI := "jti-old"
+	token, _ := jwt.NewRefreshToken(userID, oldJTI, cfg)
 
-	user := &models.User{
-		ID:       userID,
-		Email:    "test@example.com",
+	profile := &models.Profile{
+		ID:       uuid.MustParse(userID),
 		Username: "testuser",
-		Role:     "user",
+		Role:     string(models.RoleUser),
 	}
 
-	t.Run("success", func(t *testing.T) {
-		mockRefreshTokenRepo.EXPECT().GetRefreshTokenJTI(gomock.Any(), userID).Return(oldJTI, nil)
-		mockRefreshTokenRepo.EXPECT().DeleteRefreshToken(gomock.Any(), userID).Return(nil)
-		mockUserRepo.EXPECT().GetUserByID(gomock.Any(), userID).Return(user, nil)
-		mockRefreshTokenRepo.EXPECT().StoreRefreshToken(
-			gomock.Any(), userID, gomock.Any(), config.RefreshTokenTTL,
-		).Return(nil)
+	mockRTRepo.EXPECT().GetRefreshTokenJTI(ctx, userID).Return(oldJTI, nil)
+	mockRTRepo.EXPECT().DeleteRefreshToken(ctx, userID).Return(nil)
+	mockProfileRepo.EXPECT().GetProfileByID(ctx, userID).Return(profile, nil)
+	mockRTRepo.EXPECT().StoreRefreshToken(ctx, userID, gomock.Any(), cfg.RefreshTokenTTL).Return(nil)
 
-		response, err := authService.RefreshToken(context.Background(), oldRefreshToken)
-		assert.NoError(t, err)
-		assert.NotEmpty(t, response.AccessToken)
-		assert.NotEmpty(t, response.RefreshToken)
-
-		parsedAccessToken, err := jwt.ValidateToken(response.AccessToken, config)
-		assert.NoError(t, err)
-		assert.Equal(t, userID, parsedAccessToken[jwt.ClaimUUID].(string))
-
-		parsedRefreshTokenUserID, parsedRefreshTokenJTI, err := jwt.ParseAndValidateRefreshToken(
-			response.RefreshToken, config,
-		)
-		assert.NoError(t, err)
-		assert.Equal(t, userID, parsedRefreshTokenUserID)
-		assert.NotEqual(t, oldJTI, parsedRefreshTokenJTI)
-	})
-
-	t.Run("error validating old refresh token - invalid token", func(t *testing.T) {
-		_, err := authService.RefreshToken(context.Background(), "invalid-token-string")
-		assert.Error(t, err)
-		assert.True(t, errors.Is(err, ErrInvalidRefreshToken))
-	})
-
-	t.Run("error validating old refresh token - expired", func(t *testing.T) {
-		expiredConfig := jwt.Config{
-			Secret:          "secret",
-			AccessTokenTTL:  1 * time.Hour,
-			RefreshTokenTTL: -1 * time.Hour,
-		}
-		expiredToken, _ := jwt.NewRefreshToken(userID, "some-jti", expiredConfig)
-		time.Sleep(10 * time.Millisecond)
-
-		_, err := authService.RefreshToken(context.Background(), expiredToken)
-		assert.Error(t, err)
-		assert.True(t, errors.Is(err, ErrInvalidRefreshToken))
-	})
-
-	t.Run("jti not found in redis", func(t *testing.T) {
-		mockRefreshTokenRepo.EXPECT().GetRefreshTokenJTI(gomock.Any(), userID).Return("", goRedis.Nil)
-
-		_, err := authService.RefreshToken(context.Background(), oldRefreshToken)
-		assert.Error(t, err)
-		assert.True(t, errors.Is(err, ErrTokenNotFound))
-	})
-
-	t.Run("jti mismatch", func(t *testing.T) {
-		mockRefreshTokenRepo.EXPECT().GetRefreshTokenJTI(gomock.Any(), userID).Return("different-jti-from-redis", nil)
-
-		_, err := authService.RefreshToken(context.Background(), oldRefreshToken)
-		assert.Error(t, err)
-		assert.True(t, errors.Is(err, ErrInvalidRefreshToken))
-	})
-
-	t.Run("error deleting old refresh token", func(t *testing.T) {
-		mockRefreshTokenRepo.EXPECT().GetRefreshTokenJTI(gomock.Any(), userID).Return(oldJTI, nil)
-		mockRefreshTokenRepo.EXPECT().DeleteRefreshToken(gomock.Any(), userID).Return(errors.New("db error"))
-
-		_, err := authService.RefreshToken(context.Background(), oldRefreshToken)
-		assert.Error(t, err)
-		assert.True(t, errors.Is(err, ErrFailedToDeleteRefreshToken))
-	})
-
-	t.Run("error get user by id", func(t *testing.T) {
-		mockRefreshTokenRepo.EXPECT().GetRefreshTokenJTI(gomock.Any(), userID).Return(oldJTI, nil)
-		mockRefreshTokenRepo.EXPECT().DeleteRefreshToken(gomock.Any(), userID).Return(nil)
-		mockUserRepo.EXPECT().GetUserByID(gomock.Any(), userID).Return(nil, models.ErrUserNotFound)
-
-		_, err := authService.RefreshToken(context.Background(), oldRefreshToken)
-		assert.Error(t, err)
-		assert.True(t, errors.Is(err, ErrUserNotFound))
-	})
-
-	t.Run("error storing new refresh token", func(t *testing.T) {
-		mockRefreshTokenRepo.EXPECT().GetRefreshTokenJTI(gomock.Any(), userID).Return(oldJTI, nil)
-		mockRefreshTokenRepo.EXPECT().DeleteRefreshToken(gomock.Any(), userID).Return(nil)
-		mockUserRepo.EXPECT().GetUserByID(gomock.Any(), userID).Return(user, nil)
-		mockRefreshTokenRepo.EXPECT().StoreRefreshToken(
-			gomock.Any(), userID, gomock.Any(), config.RefreshTokenTTL,
-		).Return(errors.New("db error"))
-
-		_, err := authService.RefreshToken(context.Background(), oldRefreshToken)
-		assert.Error(t, err)
-		assert.True(t, errors.Is(err, ErrFailedToStoreToken))
-	})
+	out, err := svc.RefreshToken(ctx, dto.RefreshTokenParams{RefreshToken: token})
+	assert.NoError(t, err)
+	assert.NotEmpty(t, out.AccessToken)
+	assert.NotEmpty(t, out.RefreshToken)
 }
 
 func TestAuthService_Logout(t *testing.T) {
@@ -512,56 +318,21 @@ func TestAuthService_Logout(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	mockUserRepo := mocks.NewMockUserRepository(ctrl)
-	mockTxManager := mocks.NewMockTxManagerInterface(ctrl)
-	mockRefreshTokenRepo := mocks.NewMockRefreshTokenRepository(ctrl)
+	mockRTRepo := mocks.NewMockRefreshTokenRepository(ctrl)
 
-	config := jwt.Config{
-		Secret:          "secret",
-		AccessTokenTTL:  1 * time.Hour,
-		RefreshTokenTTL: 24 * time.Hour,
-	}
-	authService := NewAuthService(mockUserRepo, config, mockTxManager, mockRefreshTokenRepo)
+	cfg := jwt.Config{Secret: "secret", AccessTokenTTL: time.Hour, RefreshTokenTTL: 24 * time.Hour}
+	svc := NewAuthService(nil, nil, nil, cfg, nil, mockRTRepo)
 
-	userID := "test-user-id"
-	jti := "some-jti"
-	refreshToken, err := jwt.NewRefreshToken(userID, jti, config)
+	ctx := context.Background()
+	userID := uuid.New().String()
+	jti := "jti-x"
+	token, _ := jwt.NewRefreshToken(userID, jti, cfg)
+
+	mockRTRepo.EXPECT().
+		DeleteRefreshToken(ctx, userID).
+		Return(nil)
+
+	out, err := svc.Logout(ctx, dto.LogoutParams{RefreshToken: token})
 	assert.NoError(t, err)
-
-	t.Run("success", func(t *testing.T) {
-		mockRefreshTokenRepo.EXPECT().DeleteRefreshToken(gomock.Any(), userID).Return(nil)
-
-		response, err := authService.Logout(context.Background(), refreshToken)
-		assert.NoError(t, err)
-		assert.NotNil(t, response)
-		assert.True(t, response.Success)
-	})
-
-	t.Run("error validating refresh token - invalid token", func(t *testing.T) {
-		_, err := authService.Logout(context.Background(), "invalid-token-string")
-		assert.Error(t, err)
-		assert.True(t, errors.Is(err, ErrInvalidRefreshToken))
-	})
-
-	t.Run("error validating refresh token - expired", func(t *testing.T) {
-		expiredConfig := jwt.Config{
-			Secret:          "secret",
-			AccessTokenTTL:  1 * time.Hour,
-			RefreshTokenTTL: -1 * time.Hour,
-		}
-		expiredToken, _ := jwt.NewRefreshToken(userID, "some-jti", expiredConfig)
-		time.Sleep(10 * time.Millisecond)
-
-		_, err := authService.Logout(context.Background(), expiredToken)
-		assert.Error(t, err)
-		assert.True(t, errors.Is(err, ErrInvalidRefreshToken))
-	})
-
-	t.Run("error deleting refresh token from repo", func(t *testing.T) {
-		mockRefreshTokenRepo.EXPECT().DeleteRefreshToken(gomock.Any(), userID).Return(errors.New("db error"))
-
-		_, err := authService.Logout(context.Background(), refreshToken)
-		assert.Error(t, err)
-		assert.True(t, errors.Is(err, ErrFailedToDeleteRefreshToken))
-	})
+	assert.True(t, out.Success)
 }

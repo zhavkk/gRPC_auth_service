@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -15,10 +16,9 @@ func TestNewAccessToken(t *testing.T) {
 	config := Config{Secret: "secret", AccessTokenTTL: 1 * time.Hour, RefreshTokenTTL: 24 * time.Hour}
 
 	t.Run("success", func(t *testing.T) {
-		user := models.User{
-			ID:    "1",
-			Email: "test@test.com",
-			Role:  "user",
+		user := models.Profile{
+			ID:   uuid.New(),
+			Role: models.RoleUser.String(),
 		}
 		token, err := NewAccessToken(user, config)
 		require.NoError(t, err)
@@ -26,16 +26,14 @@ func TestNewAccessToken(t *testing.T) {
 
 		claims, err := ValidateToken(token, config)
 		require.NoError(t, err)
-		assert.Equal(t, user.ID, claims[ClaimUUID])
-		assert.Equal(t, user.Email, claims[ClaimEmail])
+		assert.Equal(t, user.ID.String(), claims[ClaimUUID])
 		assert.Equal(t, user.Role, claims[ClaimRole])
 	})
 
 	t.Run("empty id", func(t *testing.T) {
-		user := models.User{
-			ID:    "",
-			Email: "test@test.com",
-			Role:  "user",
+		user := models.Profile{
+			ID:   uuid.Nil,
+			Role: models.RoleUser.String(),
 		}
 		token, err := NewAccessToken(user, config)
 		require.NoError(t, err)
@@ -43,7 +41,7 @@ func TestNewAccessToken(t *testing.T) {
 
 		claims, err := ValidateToken(token, config)
 		require.NoError(t, err)
-		assert.Equal(t, "", claims[ClaimUUID])
+		assert.Equal(t, uuid.Nil.String(), claims[ClaimUUID])
 	})
 }
 
@@ -76,10 +74,9 @@ func TestValidateToken(t *testing.T) {
 	}
 
 	t.Run("success access token", func(t *testing.T) {
-		user := models.User{
-			ID:    "1",
-			Email: "test@test.com",
-			Role:  "user",
+		user := models.Profile{
+			ID:   uuid.New(),
+			Role: models.RoleUser.String(),
 		}
 		token, err := NewAccessToken(user, config)
 		require.NoError(t, err)
@@ -87,8 +84,7 @@ func TestValidateToken(t *testing.T) {
 
 		claims, err := ValidateToken(token, config)
 		require.NoError(t, err)
-		assert.Equal(t, user.ID, claims[ClaimUUID])
-		assert.Equal(t, user.Email, claims[ClaimEmail])
+		assert.Equal(t, user.ID.String(), claims[ClaimUUID])
 		assert.Equal(t, user.Role, claims[ClaimRole])
 	})
 
@@ -113,10 +109,9 @@ func TestValidateToken(t *testing.T) {
 	})
 
 	t.Run("expired access token", func(t *testing.T) {
-		user := models.User{
-			ID:    "1",
-			Email: "test@test.com",
-			Role:  "user",
+		user := models.Profile{
+			ID:   uuid.New(),
+			Role: models.RoleUser.String(),
 		}
 		expiredConfig := Config{Secret: "secret", AccessTokenTTL: 1 * time.Millisecond, RefreshTokenTTL: 24 * time.Hour}
 		token, err := NewAccessToken(user, expiredConfig)
@@ -131,7 +126,7 @@ func TestValidateToken(t *testing.T) {
 	})
 
 	t.Run("token signed with different secret", func(t *testing.T) {
-		user := models.User{ID: "1", Email: "test@test.com", Role: "user"}
+		user := models.Profile{ID: uuid.New(), Role: models.RoleUser.String()}
 		token, err := NewAccessToken(user, config)
 		require.NoError(t, err)
 
@@ -143,10 +138,9 @@ func TestValidateToken(t *testing.T) {
 
 	t.Run("token with unexpected signing method", func(t *testing.T) {
 		claims := jwt.MapClaims{
-			ClaimUUID:  "123",
-			ClaimEmail: "test@example.com",
-			ClaimExp:   time.Now().Add(1 * time.Hour).Unix(),
-			ClaimRole:  "user",
+			ClaimUUID: "123",
+			ClaimExp:  time.Now().Add(1 * time.Hour).Unix(),
+			ClaimRole: "user",
 		}
 		token := jwt.NewWithClaims(jwt.SigningMethodHS512, claims)
 		tokenString, err := token.SignedString([]byte(config.Secret))
@@ -189,8 +183,9 @@ func TestParseAndValidateRefreshToken(t *testing.T) {
 		assert.ErrorIs(t, err, ErrTokenExpired)
 	})
 
+	userID2 := uuid.New()
 	t.Run("token is not a refresh token (missing jti)", func(t *testing.T) {
-		user := models.User{ID: userID, Email: "test@test.com", Role: "user"}
+		user := models.Profile{ID: userID2, Role: string(models.RoleUser)}
 		accessTokenString, err := NewAccessToken(user, config)
 		require.NoError(t, err)
 

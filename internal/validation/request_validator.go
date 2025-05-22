@@ -2,13 +2,12 @@
 package validation
 
 import (
-	"errors"
 	"strings"
 
 	auth "github.com/zhavkk/gRPC_auth_service/pkg/authpb"
 )
 
-func ValidateRegisterRequest(req *auth.RegisterRequest) error {
+func ValidateRegisterUserRequest(req *auth.RegisterUserRequest) error {
 	if err := ValidateUsername(req.GetUsername()); err != nil {
 		return err
 	}
@@ -18,36 +17,41 @@ func ValidateRegisterRequest(req *auth.RegisterRequest) error {
 	if err := ValidatePassword(req.GetPassword()); err != nil {
 		return err
 	}
-	if err := ValidateAge(req.GetAge()); err != nil {
+	return ValidateAge(req.GetAge())
+}
+
+func ValidateRegisterArtistRequest(req *auth.RegisterArtistRequest) error {
+	if err := ValidateUsername(req.GetUsername()); err != nil {
 		return err
 	}
-	return ValidateRegistrationRole(req.GetRole())
+
+	return ValidatePassword(req.GetPassword())
 }
 
 func ValidateLoginRequest(req *auth.LoginRequest) error {
-	if err := ValidateEmail(req.GetEmail()); err != nil {
+	if err := ValidateUsername(req.GetUsername()); err != nil {
 		return err
 	}
 	return ValidatePassword(req.GetPassword())
 }
 
-func ValidateSetUserRoleRequest(req *auth.SetUserRoleRequest) error {
-	if req.GetId() == "" {
-		return errors.New("invalid user ID")
-	}
-	return ValidateRole(req.GetRole())
-}
-
 func ValidateGetUserRequest(req *auth.GetUserRequest) error {
 	if req.GetId() == "" {
-		return errors.New("invalid user ID")
+		return ErrUserIDRequired
+	}
+	return nil
+}
+
+func ValidateGetArtistRequest(req *auth.GetArtistRequest) error {
+	if req.GetId() == "" {
+		return ErrArtistIDRequired
 	}
 	return nil
 }
 
 func ValidateUpdateUserRequest(req *auth.UpdateUserRequest) error {
 	if req.GetId() == "" {
-		return errors.New("invalid user ID")
+		return ErrUserIDRequired
 	}
 	if req.GetUsername() != "" {
 		if err := ValidateUsername(req.GetUsername()); err != nil {
@@ -59,10 +63,20 @@ func ValidateUpdateUserRequest(req *auth.UpdateUserRequest) error {
 	}
 	return nil
 }
-
+func ValidateUpdateArtistRequest(req *auth.UpdateArtistRequest) error {
+	if req.GetId() == "" {
+		return ErrArtistIDRequired
+	}
+	if req.GetAuthor() != "" {
+		if err := ValidateAuthor(req.GetAuthor()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 func ValidateChangePasswordRequest(req *auth.ChangePasswordRequest) error {
 	if req.GetId() == "" {
-		return errors.New("invalid user ID")
+		return ErrUserIDRequired
 	}
 	if err := ValidatePassword(req.GetOldPassword()); err != nil {
 		return err
@@ -72,28 +86,28 @@ func ValidateChangePasswordRequest(req *auth.ChangePasswordRequest) error {
 
 func ValidateRegistrationRole(role string) error {
 	if role == "" {
-		return errors.New("role is required")
+		return ErrRoleRequired
 	}
 	validRoles := map[string]bool{
 		"user":   true,
 		"artist": true,
 	}
 	if !validRoles[strings.ToLower(role)] {
-		return errors.New("role must be either 'user' or 'artist'")
+		return ErrRoleMustBeUserOrArtist
 	}
 	return nil
 }
 
 func ValidateRefreshTokenRequest(req *auth.RefreshTokenRequest) error {
 	if req.GetRefreshToken() == "" {
-		return errors.New("refresh token is required")
+		return ErrRefreshTokenRequired
 	}
 	return nil
 }
 
 func ValidateLogoutRequest(req *auth.LogoutRequest) error {
 	if req.GetRefreshToken() == "" {
-		return errors.New("refresh token is required")
+		return ErrRefreshTokenRequired
 	}
 	return nil
 }

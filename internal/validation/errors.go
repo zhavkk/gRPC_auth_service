@@ -19,4 +19,7 @@ var (
 	ErrRefreshTokenRequired     = errors.New("refresh token is required")
 	ErrRoleRequired             = errors.New("role is required")
 	ErrRoleMustBeUserOrArtist   = errors.New("role must be either 'user' or 'artist'")
+	ErrPermissionDenied         = errors.New("permission denied")
+	ErrArtistIDRequired         = errors.New("artist ID is required")
+	ErrInvalidAuthor            = errors.New("invalid author")
 )

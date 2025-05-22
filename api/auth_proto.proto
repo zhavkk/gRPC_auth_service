@@ -4,24 +4,36 @@ package auth;
 
 
 option go_package = "github.com/TeoPlow/online-music-service/src/auth_service/pkg/authpb";
-service Auth{
-    rpc Register(RegisterRequest) returns (RegisterResponse);
+
+import "google/protobuf/timestamp.proto";
+
+enum Role {
+    ROLE_UNSPECIFIED = 0;
+    USER = 1;
+    ARTIST = 2;
+    ADMIN = 3;
+}
+service AuthService{
+    rpc RegisterUser(RegisterUserRequest) returns (RegisterUserResponse);
+    rpc RegisterArtist(RegisterArtistRequest) returns (RegisterArtistResponse);
     rpc Login(LoginRequest) returns (LoginResponse);
-    rpc SetUserRole(SetUserRoleRequest) returns (SetUserRoleResponse);
     rpc GetUser(GetUserRequest) returns (GetUserResponse);
+    rpc GetArtist(GetArtistRequest) returns (GetArtistResponse);
+    rpc UpdateArtist(UpdateArtistRequest) returns (UpdateArtistResponse);
     rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse);
     rpc ChangePassword(ChangePasswordRequest) returns (ChangePasswordResponse);
     rpc RefreshToken(RefreshTokenRequest) returns (RefreshTokenResponse);
     rpc Logout(LogoutRequest) returns (LogoutResponse);
 }
 
+
 message LogoutRequest{
     string refresh_token =1;
 }
 message LogoutResponse{
     bool success = 1;
-    string message = 2;
 }
+
 message RefreshTokenRequest{
     string refresh_token = 1;
 }
@@ -30,41 +42,42 @@ message RefreshTokenResponse{
     string access_token = 1;
     string refresh_token = 2;
 }
-message RegisterRequest{
+message RegisterUserRequest{
     string username = 1;
     string email = 2;
     string password = 3;
     bool gender = 4;
     string country = 5;
     int32 age = 6;
-    string role = 7;
 }
 
-message RegisterResponse{
+message RegisterUserResponse{
     string id = 1;
 }
 
+message RegisterArtistRequest {
+    string username = 1;
+    string password = 2;
+    string author = 3;
+    string producer = 4; 
+    string country = 5;
+    string description = 6;
+}
+
+message RegisterArtistResponse {
+  string id = 1;
+}
+
 message LoginRequest{
-    string email = 1;
+    string username = 1;
     string password =2;
 }
 message LoginResponse {
     string id = 1;
     string username = 2;
-    string email = 3;
-    string role = 4;
+    Role role = 4;
     string access_token = 5;
     string refresh_token = 6; 
-}
-
-message SetUserRoleRequest {
-    string id = 1;
-    string role = 2;
-}
-
-message SetUserRoleResponse {
-    string id = 1;
-    string role = 2;
 }
 
 message GetUserRequest{
@@ -78,9 +91,24 @@ message GetUserResponse{
     bool gender = 4;
     string country = 5;
     int32 age = 6;
-    string role = 7;
+    Role role = 7;
+    google.protobuf.Timestamp created_at = 8;
+    google.protobuf.Timestamp updated_at = 9;
+}
+message GetArtistRequest {
+    string id = 1;
 }
 
+message GetArtistResponse {
+    string id = 1;
+    string author = 2;
+    string username = 3;
+    string producer = 4;
+    string country = 5;
+    string description = 6;
+    google.protobuf.Timestamp created_at = 7;
+    google.protobuf.Timestamp updated_at = 8;
+}
 message UpdateUserRequest{
     string id = 1;
     string username = 2;
@@ -89,15 +117,19 @@ message UpdateUserRequest{
 }
 
 message UpdateUserResponse{
+    bool success = 1;
+}
+message UpdateArtistRequest {
     string id = 1;
-    string username =2;
-    string email = 3;
-    bool gender = 4;
-    string country = 5;
-    int32 age = 6;
-    string role = 7;
+    string author = 2;
+    string producer = 3;
+    string country = 4;
+    string description = 5;
 }
 
+message UpdateArtistResponse {
+    bool success = 1;
+}
 message ChangePasswordRequest{
     string id =1;
     string old_password=2;
