@@ -6,87 +6,69 @@ import (
 	auth "github.com/zhavkk/gRPC_auth_service/pkg/authpb"
 )
 
-func TestValidateRegisterRequest(t *testing.T) {
+func TestValidateRegisterUserRequest(t *testing.T) {
 	tests := []struct {
 		name    string
-		req     *auth.RegisterRequest
+		req     *auth.RegisterUserRequest
 		wantErr bool
 	}{
 		{
 			name: "valid request",
-			req: &auth.RegisterRequest{
+			req: &auth.RegisterUserRequest{
 				Username: "testuser",
 				Email:    "test@example.com",
 				Password: "Password123!",
 				Gender:   true,
 				Country:  "RU",
 				Age:      25,
-				Role:     "user",
 			},
 			wantErr: false,
 		},
 		{
 			name: "invalid username",
-			req: &auth.RegisterRequest{
+			req: &auth.RegisterUserRequest{
 				Username: "ab",
 				Email:    "test@example.com",
 				Password: "Password123!",
 				Gender:   true,
 				Country:  "RU",
 				Age:      25,
-				Role:     "user",
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid email",
-			req: &auth.RegisterRequest{
+			req: &auth.RegisterUserRequest{
 				Username: "testuser",
 				Email:    "invalid-email",
 				Password: "Password123!",
 				Gender:   true,
 				Country:  "RU",
 				Age:      25,
-				Role:     "user",
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid password",
-			req: &auth.RegisterRequest{
+			req: &auth.RegisterUserRequest{
 				Username: "testuser",
 				Email:    "test@example.com",
 				Password: "short",
 				Gender:   true,
 				Country:  "RU",
 				Age:      25,
-				Role:     "user",
 			},
 			wantErr: true,
 		},
 		{
 			name: "invalid age",
-			req: &auth.RegisterRequest{
+			req: &auth.RegisterUserRequest{
 				Username: "testuser",
 				Email:    "test@example.com",
 				Password: "Password123!",
 				Gender:   true,
 				Country:  "RU",
 				Age:      -1,
-				Role:     "user",
-			},
-			wantErr: true,
-		},
-		{
-			name: "invalid role",
-			req: &auth.RegisterRequest{
-				Username: "testuser",
-				Email:    "test@example.com",
-				Password: "Password123!",
-				Gender:   true,
-				Country:  "RU",
-				Age:      25,
-				Role:     "admin",
 			},
 			wantErr: true,
 		},
@@ -94,7 +76,7 @@ func TestValidateRegisterRequest(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := ValidateRegisterRequest(test.req)
+			err := ValidateRegisterUserRequest(test.req)
 			if (err != nil) != test.wantErr {
 				t.Errorf("ValidateRegisterRequest() = %v, want %v", err, test.wantErr)
 			}
@@ -111,15 +93,15 @@ func TestValidateLoginRequest(t *testing.T) {
 		{
 			name: "valid request",
 			req: &auth.LoginRequest{
-				Email:    "test@example.com",
+				Username: "Stepashka331",
 				Password: "Password123!",
 			},
 			wantErr: false,
 		},
 		{
-			name: "invalid email",
+			name: "invalid username",
 			req: &auth.LoginRequest{
-				Email:    "invalid-email",
+				Username: "_",
 				Password: "Password123!",
 			},
 			wantErr: true,
@@ -127,7 +109,7 @@ func TestValidateLoginRequest(t *testing.T) {
 		{
 			name: "invalid password",
 			req: &auth.LoginRequest{
-				Email:    "test@example.com",
+				Username: "Stepashka331",
 				Password: "short",
 			},
 			wantErr: true,
@@ -139,48 +121,6 @@ func TestValidateLoginRequest(t *testing.T) {
 			err := ValidateLoginRequest(test.req)
 			if (err != nil) != test.wantErr {
 				t.Errorf("ValidateLoginRequest() = %v, want %v", err, test.wantErr)
-			}
-		})
-	}
-}
-
-func TestValidateSetUserRoleRequest(t *testing.T) {
-	tests := []struct {
-		name    string
-		req     *auth.SetUserRoleRequest
-		wantErr bool
-	}{
-		{
-			name: "valid request",
-			req: &auth.SetUserRoleRequest{
-				Id:   "user-id",
-				Role: "admin",
-			},
-			wantErr: false,
-		},
-		{
-			name: "empty id",
-			req: &auth.SetUserRoleRequest{
-				Id:   "",
-				Role: "admin",
-			},
-			wantErr: true,
-		},
-		{
-			name: "invalid role",
-			req: &auth.SetUserRoleRequest{
-				Id:   "user-id",
-				Role: "invalid-role",
-			},
-			wantErr: true,
-		},
-	}
-
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			err := ValidateSetUserRoleRequest(test.req)
-			if (err != nil) != test.wantErr {
-				t.Errorf("ValidateSetUserRoleRequest() = %v, want %v", err, test.wantErr)
 			}
 		})
 	}

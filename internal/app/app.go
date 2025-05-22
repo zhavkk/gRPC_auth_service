@@ -70,7 +70,7 @@ func StartApplication(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("gRPC server failed: %w", err)
 	}
 
-	logger.Log.Info("performing graceful shutdown...")
+	logger.Log.Info("starting graceful shutdown")
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancelShutdown()
 
@@ -107,7 +107,9 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 
 	tokenRepo := redisRepo.NewRefreshTokenRepoRedis(redisClient)
 
-	authService := service.NewAuthService(userRepo, jwtConfig, txManager, tokenRepo)
+	profileRepo := postgres.NewProfileRepository(db)
+	artistRepo := postgres.NewArtistRepository(db)
+	authService := service.NewAuthService(userRepo, profileRepo, artistRepo, jwtConfig, txManager, tokenRepo)
 
 	gRPCApp := grpcapp.New(cfg.GRPC.Port, jwtConfig)
 	auth.Register(gRPCApp.GetServer(), authService)

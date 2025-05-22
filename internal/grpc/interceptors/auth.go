@@ -25,8 +25,9 @@ func NewAuthInterceptor(jwtConfig pkgjwt.Config) grpc.UnaryServerInterceptor {
 }
 
 var publicMethods = map[string]bool{
-	"/auth.Auth/Register": true,
-	"/auth.Auth/Login":    true,
+	"/auth.AuthService/RegisterUser":   true,
+	"/auth.AuthService/RegisterArtist": true,
+	"/auth.AuthService/Login":          true,
 }
 
 type contextKey string

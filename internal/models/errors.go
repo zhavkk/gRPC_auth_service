@@ -3,4 +3,8 @@ package models
 
 import "errors"
 
-var ErrUserNotFound = errors.New("user not found")
+var (
+	ErrProfileNotFound = errors.New("profile not found")
+	ErrUserNotFound    = errors.New("user not found")
+	ErrArtistNotFound  = errors.New("artist not found")
+)

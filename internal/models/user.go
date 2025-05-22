@@ -3,68 +3,61 @@ package models
 
 import (
 	"time"
+
+	"github.com/google/uuid"
 )
 
+type Profile struct {
+	ID        uuid.UUID `db:"id"`
+	Username  string    `db:"username"`
+	PassHash  string    `db:"pass_hash"`
+	Role      string    `db:"role"`
+	CreatedAt time.Time `db:"created_at"`
+	UpdatedAt time.Time `db:"updated_at"`
+}
+
 type User struct {
-	ID        string    `json:"id"`
-	Username  string    `json:"username"`
-	Email     string    `json:"email"`
-	Gender    bool      `json:"gender"`
-	Country   string    `json:"country"`
-	Age       int32     `json:"age"`
-	Role      string    `json:"role"`
-	PassHash  string    `json:"passHash"`
-	CreatedAt time.Time `json:"created_at"`
+	ProfileID uuid.UUID `db:"profile_id"`
+	Email     string    `db:"email"`
+	Gender    bool      `db:"gender"`
+	Country   string    `db:"country"`
+	Age       int32     `db:"age"`
+	CreatedAt time.Time `db:"created_at"`
+	UpdatedAt time.Time `db:"updated_at"`
 }
 
-type RegisterResponse struct {
-	ID string
+type Artist struct {
+	ProfileID   uuid.UUID `db:"profile_id"`
+	Author      string    `db:"author"`
+	Producer    string    `db:"producer"`
+	Country     string    `db:"country"`
+	Description string    `db:"description"`
+	CreatedAt   time.Time `db:"created_at"`
+	UpdatedAt   time.Time `db:"updated_at"`
 }
 
-type LoginResponse struct {
-	ID           string
-	Username     string
-	Email        string
-	Role         string
-	AccessToken  string
-	RefreshToken string
+type UserFull struct {
+	ID        uuid.UUID `db:"id"`
+	Username  string    `db:"username"`
+	Role      string    `db:"role"`
+	CreatedAt time.Time `db:"created_at"`
+	UpdatedAt time.Time `db:"updated_at"`
+
+	Email   string `db:"email" `
+	Gender  bool   `db:"gender" `
+	Country string `db:"country"`
+	Age     int32  `db:"age" `
 }
 
-type LogoutResponse struct {
-	Success bool   `json:"success"`
-	Message string `json:"message,omitempty"`
-}
+type ArtistFull struct {
+	ID        uuid.UUID `db:"id"`
+	Username  string    `db:"username"`
+	Role      string    `db:"role"`
+	CreatedAt time.Time `db:"created_at"`
+	UpdatedAt time.Time `db:"updated_at"`
 
-type RefreshTokenResponse struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-}
-
-type SetUserRoleResponse struct {
-	ID   string
-	Role string
-}
-
-type GetUserResponse struct {
-	ID       string
-	Username string
-	Email    string
-	Gender   bool
-	Country  string
-	Age      int32
-	Role     string
-}
-
-type UpdateUserResponse struct {
-	ID       string
-	Username string
-	Email    string
-	Gender   bool
-	Country  string
-	Age      int32
-	Role     string
-}
-
-type ChangePasswordResponse struct {
-	Success bool
+	Author      string `db:"author"`
+	Producer    string `db:"producer"`
+	Country     string `db:"country"`
+	Description string `db:"description"`
 }

@@ -5,11 +5,13 @@ import (
 )
 
 type Validator interface {
-	ValidateRegisterRequest(req *auth.RegisterRequest) error
+	ValidateRegisterUserRequest(req *auth.RegisterUserRequest) error
+	ValidateRegisterArtistRequest(req *auth.RegisterArtistRequest) error
 	ValidateLoginRequest(req *auth.LoginRequest) error
-	ValidateSetUserRoleRequest(req *auth.SetUserRoleRequest) error
 	ValidateGetUserRequest(req *auth.GetUserRequest) error
+	ValidateGetArtistRequest(req *auth.GetArtistRequest) error
 	ValidateUpdateUserRequest(req *auth.UpdateUserRequest) error
+	ValidateUpdateArtistRequest(req *auth.UpdateArtistRequest) error
 	ValidateChangePasswordRequest(req *auth.ChangePasswordRequest) error
 	ValidateRefreshTokenRequest(req *auth.RefreshTokenRequest) error
 	ValidateLogoutRequest(req *auth.LogoutRequest) error
@@ -21,16 +23,16 @@ func NewValidator() Validator {
 
 type validator struct{}
 
-func (v *validator) ValidateRegisterRequest(req *auth.RegisterRequest) error {
-	return ValidateRegisterRequest(req)
+func (v *validator) ValidateRegisterUserRequest(req *auth.RegisterUserRequest) error {
+	return ValidateRegisterUserRequest(req)
+}
+
+func (v *validator) ValidateRegisterArtistRequest(req *auth.RegisterArtistRequest) error {
+	return ValidateRegisterArtistRequest(req)
 }
 
 func (v *validator) ValidateLoginRequest(req *auth.LoginRequest) error {
 	return ValidateLoginRequest(req)
-}
-
-func (v *validator) ValidateSetUserRoleRequest(req *auth.SetUserRoleRequest) error {
-	return ValidateSetUserRoleRequest(req)
 }
 
 func (v *validator) ValidateGetUserRequest(req *auth.GetUserRequest) error {
@@ -39,6 +41,9 @@ func (v *validator) ValidateGetUserRequest(req *auth.GetUserRequest) error {
 
 func (v *validator) ValidateUpdateUserRequest(req *auth.UpdateUserRequest) error {
 	return ValidateUpdateUserRequest(req)
+}
+func (v *validator) ValidateUpdateArtistRequest(req *auth.UpdateArtistRequest) error {
+	return ValidateUpdateArtistRequest(req)
 }
 
 func (v *validator) ValidateChangePasswordRequest(req *auth.ChangePasswordRequest) error {
@@ -51,4 +56,8 @@ func (v *validator) ValidateRefreshTokenRequest(req *auth.RefreshTokenRequest) e
 
 func (v *validator) ValidateLogoutRequest(req *auth.LogoutRequest) error {
 	return ValidateLogoutRequest(req)
+}
+
+func (v *validator) ValidateGetArtistRequest(req *auth.GetArtistRequest) error {
+	return ValidateGetArtistRequest(req)
 }

@@ -25,12 +25,11 @@ type Config struct {
 	RefreshTokenTTL time.Duration
 }
 
-func NewAccessToken(user models.User, config Config) (string, error) {
+func NewAccessToken(profile models.Profile, config Config) (string, error) {
 	claims := gojwt.MapClaims{
-		ClaimUUID:  user.ID,
-		ClaimEmail: user.Email,
-		ClaimExp:   time.Now().Add(config.AccessTokenTTL).Unix(),
-		ClaimRole:  user.Role,
+		ClaimUUID: profile.ID,
+		ClaimExp:  time.Now().Add(config.AccessTokenTTL).Unix(),
+		ClaimRole: profile.Role,
 	}
 
 	token := gojwt.NewWithClaims(gojwt.SigningMethodHS256, claims)
@@ -42,9 +41,9 @@ func NewAccessToken(user models.User, config Config) (string, error) {
 	return tokenString, nil
 }
 
-func NewRefreshToken(userID string, jti string, config Config) (string, error) {
+func NewRefreshToken(profileID string, jti string, config Config) (string, error) {
 	claims := gojwt.MapClaims{
-		ClaimUUID: userID,
+		ClaimUUID: profileID,
 		ClaimJTI:  jti,
 		ClaimExp:  time.Now().Add(config.RefreshTokenTTL).Unix(),
 	}
@@ -105,7 +104,7 @@ func ValidateToken(tokenString string,
 
 func ParseAndValidateRefreshToken(tokenString string,
 	config Config,
-) (userID string,
+) (profileID string,
 	jti string,
 	err error,
 ) {
@@ -114,11 +113,11 @@ func ParseAndValidateRefreshToken(tokenString string,
 		return "", "", err
 	}
 
-	userIDClaim, okUserID := claims[ClaimUUID].(string)
+	profileIDClaim, okProfileID := claims[ClaimUUID].(string)
 	jtiClaim, okJTI := claims[ClaimJTI].(string)
 
-	if !okUserID || !okJTI {
+	if !okProfileID || !okJTI {
 		return "", "", ErrInvalidRefreshToken
 	}
-	return userIDClaim, jtiClaim, nil
+	return profileIDClaim, jtiClaim, nil
 }

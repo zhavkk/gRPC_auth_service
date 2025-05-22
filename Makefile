@@ -1,3 +1,5 @@
+include ../../Makefile
+
 CONFIG_PATH=./config/config.yaml
 COMPOSE_PATH=./config/docker-compose.yml
 MIGRATIONS_DIR=./migrations
@@ -42,6 +44,3 @@ gen-pb:
 # for tests
 .PHONY: test-deps-up
 test-deps-up: compose-up migrate-up
-
-.PHONY: test-deps-down
-test-deps-down: compose-down

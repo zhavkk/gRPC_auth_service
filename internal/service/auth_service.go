@@ -12,6 +12,7 @@ import (
 	goRedis "github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/zhavkk/gRPC_auth_service/internal/dto"
 	"github.com/zhavkk/gRPC_auth_service/internal/logger"
 	"github.com/zhavkk/gRPC_auth_service/internal/models"
 	"github.com/zhavkk/gRPC_auth_service/internal/pkg/jwt"
@@ -24,17 +25,33 @@ type RefreshTokenRepository interface {
 	DeleteRefreshToken(ctx context.Context, userID string) error
 }
 
+type ProfileRepository interface {
+	CreateProfile(ctx context.Context, p *models.Profile) error
+	GetProfileByID(ctx context.Context, id string) (*models.Profile, error)
+	GetProfileByUsername(ctx context.Context, username string) (*models.Profile, error)
+	UpdatePassword(ctx context.Context, id string, newPass string) error
+	UpdateRole(ctx context.Context, id string, newRole string) error
+	UpdateUsername(ctx context.Context, id string, newUsername string) error
+}
+
 type UserRepository interface {
 	CreateUser(ctx context.Context, user *models.User) error
-	GetUserByID(ctx context.Context, id string) (*models.User, error)
-	GetUserByEmail(ctx context.Context, email string) (*models.User, error)
+	GetUserByID(ctx context.Context, id string) (*models.UserFull, error)
+	GetUserByEmail(ctx context.Context, email string) (*models.UserFull, error)
 	UpdateUser(ctx context.Context, user *models.User) error
-	UpdateUserRole(ctx context.Context, id string, role string) error
-	UpdateUserPassword(ctx context.Context, id string, hashedPassword string) error
+}
+
+type ArtistRepository interface {
+	CreateArtist(ctx context.Context, artist *models.Artist) error
+	GetArtistByID(ctx context.Context, id string) (*models.ArtistFull, error)
+	GetArtistByAuthor(ctx context.Context, author string) (*models.ArtistFull, error)
+	UpdateArtist(ctx context.Context, artist *models.Artist) error
 }
 
 type AuthService struct {
 	userRepo         UserRepository
+	profileRepo      ProfileRepository
+	artistRepo       ArtistRepository
 	jwtConfig        jwt.Config
 	txManager        storage.TxManagerInterface
 	refreshTokenRepo RefreshTokenRepository
@@ -42,273 +59,402 @@ type AuthService struct {
 
 func NewAuthService(
 	userRepo UserRepository,
+	profileRepo ProfileRepository,
+	artistRepo ArtistRepository,
 	jwtConfig jwt.Config,
 	txManager storage.TxManagerInterface,
 	refreshTokenRepo RefreshTokenRepository,
 ) *AuthService {
 	return &AuthService{
 		userRepo:         userRepo,
+		profileRepo:      profileRepo,
+		artistRepo:       artistRepo,
 		jwtConfig:        jwtConfig,
 		txManager:        txManager,
 		refreshTokenRepo: refreshTokenRepo,
 	}
 }
 
-func (s *AuthService) Register(
+func (s *AuthService) RegisterUser(
 	ctx context.Context,
-	username string,
-	email string,
-	password string,
-	gender bool,
-	country string,
-	age int32,
-	role string,
-) (*models.RegisterResponse, error) {
-	const op = "auth_service.Register"
+	params dto.RegisterUserParams,
+) (*dto.RegisterUserResponse, error) {
+	const op = "auth_service.RegisterUser"
 
-	resp := &models.RegisterResponse{}
+	var resp *dto.RegisterUserResponse
+
 	err := s.txManager.RunSerializable(ctx, func(ctx context.Context) error {
-		_, err := s.userRepo.GetUserByEmail(ctx, email)
-		if err == nil {
-			return ErrUserAlreadyExists
-		}
-
-		PassHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+		existingUser, err := s.userRepo.GetUserByEmail(ctx, params.Email)
 		if err != nil {
-			logger.Log.Error("Failed to generate password hash", "err", err)
-			return fmt.Errorf("%s %w", op, ErrHashPassword)
+			if !errors.Is(err, models.ErrUserNotFound) {
+				return fmt.Errorf("%s: %w", op, err)
+			}
+		} else if existingUser != nil {
+			return fmt.Errorf("%s: %w", op, ErrUserAlreadyExists)
 		}
 
+		existingProfile, err := s.profileRepo.GetProfileByUsername(ctx, params.Username)
+		if err != nil {
+			if !errors.Is(err, models.ErrProfileNotFound) {
+				return fmt.Errorf("%s: %w", op, err)
+			}
+		} else if existingProfile != nil {
+			return fmt.Errorf("%s: %w", op, ErrUsernameAlreadyTaken)
+		}
+
+		logger.Log.Info(op, "identity passed", params.Username)
+		passHash, err := bcrypt.GenerateFromPassword([]byte(params.Password), bcrypt.DefaultCost)
+		if err != nil {
+			return fmt.Errorf("%s: %w", op, ErrHashPassword)
+		}
+
+		profileID := uuid.New()
+		profile := &models.Profile{
+			ID:       profileID,
+			Username: params.Username,
+			PassHash: string(passHash),
+			Role:     string(models.RoleUser),
+		}
+		if err := s.profileRepo.CreateProfile(ctx, profile); err != nil {
+			return fmt.Errorf("%s: %w", op, ErrFailedToCreateProfile)
+		}
 		user := &models.User{
-			ID:       uuid.New().String(),
-			Username: username,
-			Email:    email,
-			PassHash: string(PassHash),
-			Gender:   gender,
-			Country:  country,
-			Age:      age,
-			Role:     role,
+			ProfileID: profile.ID,
+			Email:     params.Email,
+			Gender:    params.Gender,
+			Country:   params.Country,
+			Age:       params.Age,
 		}
-
 		if err := s.userRepo.CreateUser(ctx, user); err != nil {
-			logger.Log.Error("Failed to create user", "err", err)
-			return fmt.Errorf("%s %w", op, ErrFailedToCreateUser)
+			return fmt.Errorf("%s: %w", op, ErrFailedToCreateUser)
 		}
 
-		resp = &models.RegisterResponse{
-			ID: user.ID,
+		resp = &dto.RegisterUserResponse{
+			ID: profileID.String(),
 		}
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%s %w", op, err)
+		return nil, err
 	}
+	logger.Log.Info(op, "profile_id ", resp.ID)
+	return resp, nil
+}
 
-	logger.Log.With(slog.String("op", op)).Info("user register  successfully")
+func (s *AuthService) RegisterArtist(
+	ctx context.Context,
+	params dto.RegisterArtistParams,
+) (*dto.RegisterArtistResponse, error) {
+	const op = "auth_service.RegisterArtist"
+	var resp *dto.RegisterArtistResponse
+	err := s.txManager.RunSerializable(ctx, func(ctx context.Context) error {
+		if _, err := s.artistRepo.GetArtistByAuthor(ctx, params.Author); err != nil {
+			if !errors.Is(err, models.ErrArtistNotFound) {
+				return fmt.Errorf("%s: %w", op, err)
+			}
+		} else {
+			return fmt.Errorf("%s: %w", op, ErrArtistAlreadyExists)
+		}
+
+		if _, err := s.profileRepo.GetProfileByUsername(ctx, params.Username); err != nil {
+			if !errors.Is(err, models.ErrProfileNotFound) {
+				return fmt.Errorf("%s: %w", op, err)
+			}
+		} else {
+			return fmt.Errorf("%s: %w", op, ErrUsernameAlreadyTaken)
+		}
+		logger.Log.Info(op, "identity passed", params.Author)
+		passHash, err := bcrypt.GenerateFromPassword([]byte(params.Password), bcrypt.DefaultCost)
+		if err != nil {
+			return fmt.Errorf("%s: %w", op, ErrHashPassword)
+		}
+
+		profileID := uuid.New()
+		profile := &models.Profile{
+			ID:       profileID,
+			Username: params.Username,
+			PassHash: string(passHash),
+			Role:     string(models.RoleArtist),
+		}
+		if err := s.profileRepo.CreateProfile(ctx, profile); err != nil {
+			return fmt.Errorf("%s: %w", op, ErrFailedToCreateProfile)
+		}
+		artist := &models.Artist{
+			ProfileID:   profile.ID,
+			Author:      params.Author,
+			Producer:    params.Producer,
+			Description: params.Description,
+			Country:     params.Country,
+		}
+		if err := s.artistRepo.CreateArtist(ctx, artist); err != nil {
+			return fmt.Errorf("%s: %w", op, ErrFailedToCreateArtist)
+		}
+
+		resp = &dto.RegisterArtistResponse{
+			ID: profileID.String(),
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	logger.Log.Info(op, "profile_id ", resp.ID)
 	return resp, nil
 }
 
 func (s *AuthService) Login(
 	ctx context.Context,
-	email string,
-	password string,
-) (*models.LoginResponse, error) {
+	params dto.LoginParams,
+) (*dto.LoginResponse, error) {
 	const op = "auth_service.Login"
 
-	user, err := s.userRepo.GetUserByEmail(ctx, email)
+	profile, err := s.profileRepo.GetProfileByUsername(ctx, params.Username)
 	if err != nil {
-		logger.Log.Error("Failed to get user by email", slog.String("op", op), slog.String("email", email), "err", err)
-		if errors.Is(err, models.ErrUserNotFound) {
-			return nil, fmt.Errorf("%s: %w", op, ErrInvalidEmailOrPassword)
+		logger.Log.Debug("failed to get profile by username",
+			slog.String("op", op),
+			slog.String("username", params.Username),
+			"err", err,
+		)
+		if errors.Is(err, models.ErrProfileNotFound) {
+			return nil, fmt.Errorf("%s: %w", op, ErrInvalidUsernameOrPassword)
 		}
-		return nil, fmt.Errorf("%s: %w", op, ErrFailedToGetUser)
+		return nil, fmt.Errorf("%s: %w", op, ErrFailedToGetProfile)
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PassHash), []byte(password)); err != nil {
-		logger.Log.Warn("Invalid password attempt", slog.String("op", op), slog.String("email", email), "err", err)
-		return nil, fmt.Errorf("%s: %w", op, ErrInvalidEmailOrPassword)
+	if err := bcrypt.CompareHashAndPassword([]byte(profile.PassHash), []byte(params.Password)); err != nil {
+		logger.Log.Warn("invalid password attempt",
+			slog.String("op", op),
+			slog.String("username", params.Username),
+			"err", err,
+		)
+		return nil, fmt.Errorf("%s: %w", op, ErrInvalidUsernameOrPassword)
 	}
 
-	accessToken, err := jwt.NewAccessToken(*user, s.jwtConfig)
+	accessToken, err := jwt.NewAccessToken(*profile, s.jwtConfig)
 	if err != nil {
-		logger.Log.Error("Failed to generate access token",
-			slog.String("op", op), slog.String("user_id", user.ID), "err", err)
+		logger.Log.Error("failed to generate access token",
+			slog.String("op", op),
+			slog.String("profile_id", profile.ID.String()),
+			"err", err,
+		)
 		return nil, fmt.Errorf("%s: %w", op, ErrFailedToGenerateToken)
 	}
 
 	refreshTokenJTI := uuid.New().String()
-	refreshToken, err := jwt.NewRefreshToken(user.ID, refreshTokenJTI, s.jwtConfig)
+	refreshToken, err := jwt.NewRefreshToken(profile.ID.String(), refreshTokenJTI, s.jwtConfig)
 	if err != nil {
-		logger.Log.Error("Failed to generate refresh token",
-			slog.String("op", op), slog.String("user_id", user.ID), "err", err)
+		logger.Log.Error("failed to generate refresh token",
+			slog.String("op", op),
+			slog.String("profile_id", profile.ID.String()),
+			"err", err,
+		)
 		return nil, fmt.Errorf("%s: %w", op, ErrFailedToGenerateToken)
 	}
 
-	err = s.refreshTokenRepo.StoreRefreshToken(ctx, user.ID, refreshTokenJTI, s.jwtConfig.RefreshTokenTTL)
+	err = s.refreshTokenRepo.StoreRefreshToken(ctx, profile.ID.String(), refreshTokenJTI, s.jwtConfig.RefreshTokenTTL)
 	if err != nil {
-		logger.Log.Error("Failed to store refresh token JTI in Redis",
-			slog.String("op", op), slog.String("user_id", user.ID), "err", err)
+		logger.Log.Error("failed to store refresh token in Redis",
+			slog.String("op", op),
+			slog.String("profile_id", profile.ID.String()),
+			"err", err,
+		)
 		return nil, fmt.Errorf("%s: %w", op, ErrFailedToStoreToken)
 	}
 
-	logger.Log.Info("User logged in successfully", slog.String("op", op), slog.String("user_id", user.ID))
-	return &models.LoginResponse{
-		ID:           user.ID,
-		Username:     user.Username,
-		Email:        user.Email,
-		Role:         user.Role,
+	logger.Log.Info("user logged in successfully",
+		slog.String("op", op),
+		slog.String("user_id",
+			profile.ID.String()))
+	return &dto.LoginResponse{
+		ID:           profile.ID.String(),
+		Username:     profile.Username,
+		Role:         models.Role(profile.Role),
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
 	}, nil
 }
 
-func (s *AuthService) SetUserRole(
-	ctx context.Context,
-	id string,
-	role string,
-) (*models.SetUserRoleResponse, error) {
-	const op = "auth_service.SetUserRole"
-
-	resp := &models.SetUserRoleResponse{}
-	err := s.txManager.RunSerializable(ctx, func(ctx context.Context) error {
-		user, err := s.userRepo.GetUserByID(ctx, id)
-		if err != nil {
-			if errors.Is(err, models.ErrUserNotFound) {
-				return fmt.Errorf("%s %w", op, ErrUserNotFound)
-			}
-			logger.Log.Error("Failed to get user", "err", err)
-			return fmt.Errorf("%s %w", op, ErrFailedToGetUser)
-		}
-
-		if !isValidRole(role) {
-			logger.Log.Error("Invalid role", "err", err)
-			return fmt.Errorf("%s %w", op, ErrInvalidRole)
-		}
-
-		if err := s.userRepo.UpdateUserRole(ctx, id, role); err != nil {
-			logger.Log.Error("Failed to update user role", "err", err)
-			return fmt.Errorf("%s %w", op, ErrFailedToUpdateRole)
-		}
-		logger.Log.With(slog.String("op", op)).Info("User role was updated")
-		resp = &models.SetUserRoleResponse{
-			ID:   user.ID,
-			Role: role,
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("%s %w", op, err)
-	}
-
-	return resp, nil
-}
-
 func (s *AuthService) GetUser(
 	ctx context.Context,
-	id string,
-) (*models.GetUserResponse, error) {
+	params dto.GetUserParams,
+) (*dto.GetUserResponse, error) {
 	const op = "auth_service.GetUser"
 
-	user, err := s.userRepo.GetUserByID(ctx, id)
+	var resp *dto.GetUserResponse
+	user, err := s.userRepo.GetUserByID(ctx, params.ID)
 	if err != nil {
 		if errors.Is(err, ErrUserNotFound) {
 			logger.Log.Error("User not found", "err", err)
 			return nil, fmt.Errorf("%s %w", op, ErrUserNotFound)
 		}
-		logger.Log.Error("Failed to get user", "err", err)
+		logger.Log.Error(op, "err", err)
 		return nil, fmt.Errorf("%s %w", op, ErrFailedToGetUser)
 	}
 
-	logger.Log.With(slog.String("op", op)).Info("user found successfully")
-	return &models.GetUserResponse{
-		ID:       user.ID,
-		Username: user.Username,
-		Email:    user.Email,
-		Gender:   user.Gender,
-		Country:  user.Country,
-		Age:      user.Age,
-		Role:     user.Role,
-	}, nil
-}
+	logger.Log.Info(op, "user found successfully", params.ID)
+	resp = &dto.GetUserResponse{
+		ID:        params.ID,
+		Username:  user.Username,
+		Email:     user.Email,
+		Gender:    user.Gender,
+		Country:   user.Country,
+		Age:       user.Age,
+		Role:      models.Role(user.Role),
+		CreatedAt: user.CreatedAt,
+		UpdatedAt: user.UpdatedAt,
+	}
 
+	return resp, nil
+}
+func (s *AuthService) GetArtist(
+	ctx context.Context,
+	params dto.GetArtistParams,
+) (*dto.GetArtistResponse, error) {
+	const op = "auth_service.GetArtist"
+
+	var resp *dto.GetArtistResponse
+	artist, err := s.artistRepo.GetArtistByID(ctx, params.ID)
+	if err != nil {
+		if errors.Is(err, ErrArtistNotFound) {
+			logger.Log.Error(op, "err", err)
+			return nil, fmt.Errorf("%s %w", op, ErrArtistNotFound)
+		}
+		logger.Log.Error(op, "err", err)
+		return nil, fmt.Errorf("%s %w", op, ErrFailedToGetArtist)
+	}
+
+	logger.Log.Info(op, "artist found successfully", params.ID)
+	resp = &dto.GetArtistResponse{
+		ID:        params.ID,
+		Username:  artist.Username,
+		Author:    artist.Author,
+		Producer:  artist.Producer,
+		Country:   artist.Country,
+		CreatedAt: artist.CreatedAt,
+		UpdatedAt: artist.UpdatedAt,
+	}
+
+	return resp, nil
+}
 func (s *AuthService) UpdateUser(
 	ctx context.Context,
-	id string,
-	username string,
-	country string,
-	age int32,
-) (*models.UpdateUserResponse, error) {
+	params dto.UpdateUserParams,
+) (*dto.UpdateUserResponse, error) {
 	const op = "auth_service.UpdateUser"
 
-	resp := &models.UpdateUserResponse{}
+	var resp *dto.UpdateUserResponse
 	err := s.txManager.RunSerializable(ctx, func(ctx context.Context) error {
-		user, err := s.userRepo.GetUserByID(ctx, id)
+		userFull, err := s.userRepo.GetUserByID(ctx, params.ID)
 		if err != nil {
-			logger.Log.Error("Failed to get user", "err", err)
-			return fmt.Errorf("%s %w", op, ErrFailedToGetUser)
+			return fmt.Errorf("%s: %w", op, ErrFailedToGetUser)
 		}
 
-		user.Username = username
-		user.Country = country
-		user.Age = age
-
-		if err := s.userRepo.UpdateUser(ctx, user); err != nil {
-			logger.Log.Error("Failed to update user", "err", err)
-			return fmt.Errorf("%s %w", op, ErrFailedToUpdateUser)
+		if other, err := s.profileRepo.GetProfileByUsername(ctx, params.Username); err == nil {
+			if other.ID.String() != params.ID {
+				return fmt.Errorf("%s: %w", op, ErrUsernameAlreadyTaken)
+			}
+		} else if !errors.Is(err, models.ErrProfileNotFound) {
+			return fmt.Errorf("%s: %w", op, err)
 		}
 
-		logger.Log.With(slog.String("op", op)).Info("User was updated")
-		resp = &models.UpdateUserResponse{
-			ID:       user.ID,
-			Username: user.Username,
-			Email:    user.Email,
-			Gender:   user.Gender,
-			Country:  user.Country,
-			Age:      user.Age,
-			Role:     user.Role,
+		userFull.Username = params.Username
+		userFull.Country = params.Country
+		userFull.Age = params.Age
+
+		if err := s.profileRepo.UpdateUsername(ctx, params.ID, params.Username); err != nil {
+			return fmt.Errorf("%s: %w", op, ErrFailedToUpdateProfile)
 		}
+		toUpdate := &models.User{
+			ProfileID: userFull.ID,
+			Email:     userFull.Email,
+			Gender:    userFull.Gender,
+			Country:   userFull.Country,
+			Age:       userFull.Age,
+		}
+		if err := s.userRepo.UpdateUser(ctx, toUpdate); err != nil {
+			return fmt.Errorf("%s: %w", op, ErrFailedToUpdateUser)
+		}
+
+		resp = &dto.UpdateUserResponse{Success: true}
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("%s %w", op, err)
+		return nil, err
 	}
+	return resp, nil
+}
+
+func (s *AuthService) UpdateArtist(
+	ctx context.Context,
+	params dto.UpdateArtistParams,
+) (*dto.UpdateArtistResponse, error) {
+	const op = "auth_service.UpdateArtist"
+
+	resp := &dto.UpdateArtistResponse{}
+
+	err := s.txManager.RunSerializable(ctx, func(ctx context.Context) error {
+		artistFull, err := s.artistRepo.GetArtistByID(ctx, params.ID)
+		if err != nil {
+			if errors.Is(err, models.ErrArtistNotFound) {
+				return fmt.Errorf("%s: %w", op, ErrArtistNotFound)
+			}
+			return fmt.Errorf("%s: %w", op, ErrFailedToGetArtist)
+		}
+
+		art := &models.Artist{
+			ProfileID:   artistFull.ID,
+			Author:      params.Author,
+			Producer:    params.Producer,
+			Country:     params.Country,
+			Description: params.Description,
+		}
+
+		if err := s.artistRepo.UpdateArtist(ctx, art); err != nil {
+			return fmt.Errorf("%s: %w", op, ErrFailedToUpdateArtist)
+		}
+		resp.Success = true
+		return nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
 	return resp, nil
 }
 
 func (s *AuthService) ChangePassword(
 	ctx context.Context,
-	id string,
-	oldPassword string,
-	newPassword string,
-) (*models.ChangePasswordResponse, error) {
+	params dto.ChangePasswordParams,
+) (*dto.ChangePasswordResponse, error) {
 	const op = "auth_service.ChangePassword"
 
-	resp := &models.ChangePasswordResponse{}
+	var resp *dto.ChangePasswordResponse
 	err := s.txManager.RunSerializable(ctx, func(ctx context.Context) error {
-		user, err := s.userRepo.GetUserByID(ctx, id)
+		profile, err := s.profileRepo.GetProfileByID(ctx, params.ID)
 		if err != nil {
-			logger.Log.Error("Failed to get user", "err", err)
-			return fmt.Errorf("%s %w", op, ErrFailedToGetUser)
+			logger.Log.Error("Failed to get profile", "err", err)
+			return fmt.Errorf("%s %w", op, ErrFailedToGetProfile)
 		}
 
-		if err := bcrypt.CompareHashAndPassword([]byte(user.PassHash), []byte(oldPassword)); err != nil {
+		if err := bcrypt.CompareHashAndPassword([]byte(profile.PassHash), []byte(params.OldPassword)); err != nil {
 			return fmt.Errorf("%s %w", op, ErrInvalidPassword)
 		}
 
-		PassHash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+		PassHash, err := bcrypt.GenerateFromPassword([]byte(params.NewPassword), bcrypt.DefaultCost)
 		if err != nil {
-			logger.Log.Error("Failed to generate password hash", "err", err)
+			logger.Log.Error(op, "err", err)
 			return fmt.Errorf("%s %w", op, ErrHashPassword)
 		}
 
-		if err := s.userRepo.UpdateUserPassword(ctx, id, string(PassHash)); err != nil {
-			logger.Log.Error("Failed to update user password", "err", err)
+		if err := s.profileRepo.UpdatePassword(ctx, params.ID, string(PassHash)); err != nil {
+			logger.Log.Error(op, "err", err)
 			return fmt.Errorf("%s %w", op, ErrFailedToUpdatePassword)
 		}
-		logger.Log.With(slog.String("op", op)).Info("Pass was changed")
-		resp = &models.ChangePasswordResponse{
+		resp = &dto.ChangePasswordResponse{
 			Success: true,
 		}
+		logger.Log.Info(op, "Pass was changed", resp.Success)
 		return nil
 	})
 	if err != nil {
@@ -317,109 +463,103 @@ func (s *AuthService) ChangePassword(
 	return resp, nil
 }
 
-func isValidRole(role string) bool {
-	validRoles := map[string]bool{
-		"user":   true,
-		"admin":  true,
-		"artist": true,
-	}
-	return validRoles[role]
-}
-
 func (s *AuthService) RefreshToken(
 	ctx context.Context,
-	oldRefreshTokenString string,
-) (*models.RefreshTokenResponse, error) {
+	params dto.RefreshTokenParams,
+) (*dto.RefreshTokenResponse, error) {
 	const op = "auth_service.RefreshToken"
-
-	userID, jtiFromToken, err := jwt.ParseAndValidateRefreshToken(oldRefreshTokenString, s.jwtConfig)
+	var resp *dto.RefreshTokenResponse
+	profileID, jtiFromToken, err := jwt.ParseAndValidateRefreshToken(params.RefreshToken, s.jwtConfig)
 	if err != nil {
 		logger.Log.Warn("Invalid refresh token received for refresh", "op", op, "err", err)
 		return nil, fmt.Errorf("%s: %w", op, ErrInvalidRefreshToken)
 	}
 
-	jtiFromRedis, err := s.refreshTokenRepo.GetRefreshTokenJTI(ctx, userID)
+	jtiFromRedis, err := s.refreshTokenRepo.GetRefreshTokenJTI(ctx, profileID)
 	if err != nil {
 		if errors.Is(err, goRedis.Nil) {
 			logger.Log.Warn("Refresh token JTI not found in Redis (token revoked or expired)",
-				slog.String("op", op), slog.String("user_id", userID))
+				slog.String("op", op), slog.String("profile_id", profileID))
 			return nil, fmt.Errorf("%s: %w", op, ErrTokenNotFound)
 		}
-		logger.Log.Error("Failed to get refresh token JTI from Redis", "op", op, "user_id", userID, "err", err)
+		logger.Log.Error("Failed to get refresh token JTI from Redis", "op", op, "profile_id", profileID, "err", err)
 		return nil, fmt.Errorf("%s: %w", op, ErrFailedToGetRefreshTokenJTI)
 	}
 
 	if jtiFromRedis != jtiFromToken {
 		logger.Log.Warn("JTI mismatch for refresh token (potential replay attack or old token)",
-			slog.String("op", op), slog.String("user_id", userID))
+			slog.String("op", op), slog.String("profile_id", profileID))
 		return nil, fmt.Errorf("%s: %w", op, ErrInvalidRefreshToken)
 	}
 
-	err = s.refreshTokenRepo.DeleteRefreshToken(ctx, userID)
+	err = s.refreshTokenRepo.DeleteRefreshToken(ctx, profileID)
 	if err != nil {
 		logger.Log.Error("Failed to delete old refresh token JTI from Redis during refresh",
-			slog.String("op", op), slog.String("user_id", userID), "err", err)
+			slog.String("op", op), slog.String("profile_id", profileID), "err", err)
 		return nil, fmt.Errorf("%s: %w", op, ErrFailedToDeleteRefreshToken)
 	}
 
-	user, err := s.userRepo.GetUserByID(ctx, userID)
+	profile, err := s.profileRepo.GetProfileByID(ctx, profileID)
 	if err != nil {
-		logger.Log.Error("Failed to get user for new token generation during refresh",
-			slog.String("op", op), slog.String("user_id", userID), "err", err)
-		if errors.Is(err, models.ErrUserNotFound) {
-			return nil, fmt.Errorf("%s: %w", op, ErrUserNotFound)
+		logger.Log.Error("Failed to get profile for new token generation during refresh",
+			slog.String("op", op), slog.String("profile_id", profileID), "err", err)
+		if errors.Is(err, models.ErrProfileNotFound) {
+			return nil, fmt.Errorf("%s: %w", op, ErrProfileNotFound)
 		}
-		return nil, fmt.Errorf("%s: %w", op, ErrFailedToGetUser)
+		return nil, fmt.Errorf("%s: %w", op, ErrFailedToGetProfile)
 	}
 
-	newAccessToken, err := jwt.NewAccessToken(*user, s.jwtConfig)
+	newAccessToken, err := jwt.NewAccessToken(*profile, s.jwtConfig)
 	if err != nil {
-		logger.Log.Error("Failed to generate new access token during refresh", "op", op, "user_id", user.ID, "err", err)
+		logger.Log.Error(op, "profile_id", profile.ID.String(), "err", err)
 		return nil, fmt.Errorf("%s: %w", op, ErrFailedToGenerateToken)
 	}
 
 	newJTI := uuid.New().String()
-	newRefreshToken, err := jwt.NewRefreshToken(userID, newJTI, s.jwtConfig)
+	newRefreshToken, err := jwt.NewRefreshToken(profile.ID.String(), newJTI, s.jwtConfig)
 	if err != nil {
 		logger.Log.Error("Failed to generate new refresh token during refresh",
-			slog.String("op", op), slog.String("user_id", user.ID), "err", err)
+			slog.String("op", op), slog.String("profile_id", profile.ID.String()), "err", err)
 		return nil, fmt.Errorf("%s: %w", op, ErrFailedToGenerateToken)
 	}
 
-	err = s.refreshTokenRepo.StoreRefreshToken(ctx, userID, newJTI, s.jwtConfig.RefreshTokenTTL)
+	err = s.refreshTokenRepo.StoreRefreshToken(ctx, profile.ID.String(), newJTI, s.jwtConfig.RefreshTokenTTL)
 	if err != nil {
 		logger.Log.Error("Failed to store new refresh token JTI in Redis during refresh",
-			slog.String("op", op), slog.String("user_id", user.ID), "err", err)
+			slog.String("op", op), slog.String("profile_id", profile.ID.String()), "err", err)
 		return nil, fmt.Errorf("%s: %w", op, ErrFailedToStoreToken)
 	}
 
-	logger.Log.Info("Token refreshed successfully", "op", op, "user_id", userID)
-	return &models.RefreshTokenResponse{
+	logger.Log.Info(op, "profile_id", profileID)
+
+	resp = &dto.RefreshTokenResponse{
 		AccessToken:  newAccessToken,
 		RefreshToken: newRefreshToken,
-	}, nil
+	}
+	return resp, nil
 }
 
 func (s *AuthService) Logout(
 	ctx context.Context,
-	refreshToken string,
-) (*models.LogoutResponse, error) {
+	params dto.LogoutParams,
+) (*dto.LogoutResponse, error) {
 	const op = "auth_service.Logout"
-
-	userID, _, err := jwt.ParseAndValidateRefreshToken(refreshToken, s.jwtConfig)
+	var resp *dto.LogoutResponse
+	profileID, _, err := jwt.ParseAndValidateRefreshToken(params.RefreshToken, s.jwtConfig)
 	if err != nil {
 		logger.Log.Warn("Invalid refresh token received for logout", "op", op, "err", err)
 		return nil, fmt.Errorf("%s: %w", op, ErrInvalidRefreshToken)
 	}
 
-	err = s.refreshTokenRepo.DeleteRefreshToken(ctx, userID)
+	err = s.refreshTokenRepo.DeleteRefreshToken(ctx, profileID)
 	if err != nil {
-		logger.Log.Error("Failed to delete refresh token from Redis", "op", op, "user_id", userID, "err", err)
+		logger.Log.Error("Failed to delete refresh token from Redis", "op", op, "user_id", profileID, "err", err)
 		return nil, fmt.Errorf("%s: %w", op, ErrFailedToDeleteRefreshToken)
 	}
 
-	return &models.LogoutResponse{
+	resp = &dto.LogoutResponse{
 		Success: true,
-		Message: "Logout successful",
-	}, nil
+	}
+
+	return resp, nil
 }
