@@ -12,6 +12,7 @@ import (
 type TxManagerInterface interface {
 	RunSerializable(ctx context.Context, f func(ctx context.Context) error) error
 	RunReadUncommited(ctx context.Context, f func(context.Context) error) error
+	RunReadCommited(ctx context.Context, f func(context.Context) error) error
 }
 
 type TxManager struct {
@@ -46,6 +47,13 @@ func (m *TxManager) RunReadUncommited(ctx context.Context, f func(context.Contex
 	return m.beginFunc(ctx, opts, f)
 }
 
+func (m *TxManager) RunReadCommited(ctx context.Context, f func(ctx context.Context) error) error {
+	opts := pgx.TxOptions{
+		IsoLevel:   pgx.ReadCommitted,
+		AccessMode: pgx.ReadWrite,
+	}
+	return m.beginFunc(ctx, opts, f)
+}
 func (m *TxManager) beginFunc(ctx context.Context, opts pgx.TxOptions, f func(context.Context) error) error {
 	tx, err := m.db.GetPool().BeginTx(ctx, opts)
 	if err != nil {

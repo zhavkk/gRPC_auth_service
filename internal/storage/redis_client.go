@@ -14,7 +14,6 @@ type RedisClient struct {
 }
 
 func NewRedisClient(ctx context.Context, cfg *config.RedisConfig) (*RedisClient, error) {
-
 	redisClient := redis.NewClient(&redis.Options{
 		Addr:         cfg.RedisAddr(),
 		Password:     cfg.Password,
@@ -30,7 +29,6 @@ func NewRedisClient(ctx context.Context, cfg *config.RedisConfig) (*RedisClient,
 	}
 
 	return &RedisClient{redis: redisClient}, nil
-
 }
 
 func (r *RedisClient) GetRedis() *redis.Client {

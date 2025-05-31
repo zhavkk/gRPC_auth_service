@@ -3,7 +3,7 @@ syntax = "proto3";
 package auth;
 
 
-option go_package = "github.com/TeoPlow/online-music-service/src/auth_service/pkg/authpb";
+option go_package = "github.com/zhavkk/gRPC_auth_service/pkg/authpb";
 
 import "google/protobuf/timestamp.proto";
 

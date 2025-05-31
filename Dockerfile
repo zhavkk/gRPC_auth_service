@@ -18,4 +18,5 @@ COPY config ./config
 COPY .env .            
 
 EXPOSE 50051
+
 CMD ["./main"]

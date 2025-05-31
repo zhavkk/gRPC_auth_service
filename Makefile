@@ -25,7 +25,7 @@ compose-up:
 compose-down:
 	@docker compose -f $(COMPOSE_PATH) down 
 
-# Migrations
+# Migrationsgo generate ./...
 .PHONY: migrate-up
 migrate-up:
 	goose -dir $(MIGRATIONS_DIR) postgres "$(DB_URL)" up

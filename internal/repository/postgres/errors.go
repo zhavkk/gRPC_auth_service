@@ -14,4 +14,5 @@ var (
 	ErrFailedToCreateArtist   = errors.New("failed to create artist")
 	ErrFailedToUpdateArtist   = errors.New("failed to update artist")
 	ErrFailedToUpdateProfile  = errors.New("failed to update profile")
+	ErrNoTransactionInContext = errors.New("no transaction in context")
 )

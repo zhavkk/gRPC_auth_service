@@ -9,8 +9,7 @@ import (
 	"github.com/zhavkk/gRPC_auth_service/internal/logger"
 )
 
-type LoggingInterceptor struct {
-}
+type LoggingInterceptor struct{}
 
 func NewLoggingInterceptor() grpc.UnaryServerInterceptor {
 	return (&LoggingInterceptor{}).Unary

@@ -12,7 +12,9 @@ import (
 	goRedis "github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/zhavkk/gRPC_auth_service/internal/config"
 	"github.com/zhavkk/gRPC_auth_service/internal/dto"
+	"github.com/zhavkk/gRPC_auth_service/internal/kafka/producer"
 	"github.com/zhavkk/gRPC_auth_service/internal/logger"
 	"github.com/zhavkk/gRPC_auth_service/internal/models"
 	"github.com/zhavkk/gRPC_auth_service/internal/pkg/jwt"
@@ -32,6 +34,12 @@ type ProfileRepository interface {
 	UpdatePassword(ctx context.Context, id string, newPass string) error
 	UpdateRole(ctx context.Context, id string, newRole string) error
 	UpdateUsername(ctx context.Context, id string, newUsername string) error
+}
+
+type OutboxRepository interface {
+	InsertEventTx(ctx context.Context, topic string, key string, payload []byte) error
+	FetchUnsentBatch(ctx context.Context, limit int) ([]*models.OutboxEvent, error)
+	MarkEventAsSent(ctx context.Context, eventID int64) error
 }
 
 type UserRepository interface {
@@ -55,6 +63,8 @@ type AuthService struct {
 	jwtConfig        jwt.Config
 	txManager        storage.TxManagerInterface
 	refreshTokenRepo RefreshTokenRepository
+	outboxRepo       OutboxRepository
+	kafkaTopics      config.KafkaTopics
 }
 
 func NewAuthService(
@@ -64,6 +74,8 @@ func NewAuthService(
 	jwtConfig jwt.Config,
 	txManager storage.TxManagerInterface,
 	refreshTokenRepo RefreshTokenRepository,
+	outboxRepo OutboxRepository,
+	kafkaTopics config.KafkaTopics,
 ) *AuthService {
 	return &AuthService{
 		userRepo:         userRepo,
@@ -72,6 +84,8 @@ func NewAuthService(
 		jwtConfig:        jwtConfig,
 		txManager:        txManager,
 		refreshTokenRepo: refreshTokenRepo,
+		outboxRepo:       outboxRepo,
+		kafkaTopics:      kafkaTopics,
 	}
 }
 
@@ -108,7 +122,10 @@ func (s *AuthService) RegisterUser(
 			return fmt.Errorf("%s: %w", op, ErrHashPassword)
 		}
 
-		profileID := uuid.New()
+		profileID, err := uuid.NewRandom()
+		if err != nil {
+			return fmt.Errorf("%s: %w", op, ErrFailedToGenerateProfileID)
+		}
 		profile := &models.Profile{
 			ID:       profileID,
 			Username: params.Username,
@@ -128,7 +145,26 @@ func (s *AuthService) RegisterUser(
 		if err := s.userRepo.CreateUser(ctx, user); err != nil {
 			return fmt.Errorf("%s: %w", op, ErrFailedToCreateUser)
 		}
-
+		userFull := &models.UserFull{
+			ID:        profile.ID,
+			Username:  profile.Username,
+			Email:     user.Email,
+			Gender:    user.Gender,
+			Country:   user.Country,
+			Age:       user.Age,
+			Role:      profile.Role,
+			CreatedAt: profile.CreatedAt,
+			UpdatedAt: profile.UpdatedAt,
+		}
+		topic, key, payload, err := producer.BuildUserCreatedMessage(
+			userFull, s.kafkaTopics,
+		)
+		if err != nil {
+			return fmt.Errorf("%s: %w", op, err)
+		}
+		if err := s.outboxRepo.InsertEventTx(ctx, topic, key, payload); err != nil {
+			return fmt.Errorf("%s: %w", op, ErrFailedToInsertEvent)
+		}
 		resp = &dto.RegisterUserResponse{
 			ID: profileID.String(),
 		}
@@ -169,7 +205,10 @@ func (s *AuthService) RegisterArtist(
 			return fmt.Errorf("%s: %w", op, ErrHashPassword)
 		}
 
-		profileID := uuid.New()
+		profileID, err := uuid.NewRandom()
+		if err != nil {
+			return fmt.Errorf("%s: %w", op, ErrFailedToGenerateProfileID)
+		}
 		profile := &models.Profile{
 			ID:       profileID,
 			Username: params.Username,
@@ -189,7 +228,26 @@ func (s *AuthService) RegisterArtist(
 		if err := s.artistRepo.CreateArtist(ctx, artist); err != nil {
 			return fmt.Errorf("%s: %w", op, ErrFailedToCreateArtist)
 		}
-
+		artistFull := &models.ArtistFull{
+			ID:          profile.ID,
+			Username:    profile.Username,
+			Role:        profile.Role,
+			CreatedAt:   profile.CreatedAt,
+			UpdatedAt:   profile.UpdatedAt,
+			Producer:    artist.Producer,
+			Author:      artist.Author,
+			Country:     artist.Country,
+			Description: artist.Description,
+		}
+		topic, key, payload, err := producer.BuildArtistCreatedMessage(
+			artistFull, s.kafkaTopics,
+		)
+		if err != nil {
+			return fmt.Errorf("%s: %w", op, err)
+		}
+		if err := s.outboxRepo.InsertEventTx(ctx, topic, key, payload); err != nil {
+			return fmt.Errorf("%s: %w", op, ErrFailedToInsertEvent)
+		}
 		resp = &dto.RegisterArtistResponse{
 			ID: profileID.String(),
 		}
@@ -240,8 +298,11 @@ func (s *AuthService) Login(
 		return nil, fmt.Errorf("%s: %w", op, ErrFailedToGenerateToken)
 	}
 
-	refreshTokenJTI := uuid.New().String()
-	refreshToken, err := jwt.NewRefreshToken(profile.ID.String(), refreshTokenJTI, s.jwtConfig)
+	refreshTokenJTI, err := uuid.NewRandom()
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, ErrFailedToGenerateToken)
+	}
+	refreshToken, err := jwt.NewRefreshToken(profile.ID.String(), refreshTokenJTI.String(), s.jwtConfig)
 	if err != nil {
 		logger.Log.Error("failed to generate refresh token",
 			slog.String("op", op),
@@ -251,7 +312,11 @@ func (s *AuthService) Login(
 		return nil, fmt.Errorf("%s: %w", op, ErrFailedToGenerateToken)
 	}
 
-	err = s.refreshTokenRepo.StoreRefreshToken(ctx, profile.ID.String(), refreshTokenJTI, s.jwtConfig.RefreshTokenTTL)
+	err = s.refreshTokenRepo.StoreRefreshToken(ctx,
+		profile.ID.String(),
+		refreshTokenJTI.String(),
+		s.jwtConfig.RefreshTokenTTL,
+	)
 	if err != nil {
 		logger.Log.Error("failed to store refresh token in Redis",
 			slog.String("op", op),
@@ -515,15 +580,19 @@ func (s *AuthService) RefreshToken(
 		return nil, fmt.Errorf("%s: %w", op, ErrFailedToGenerateToken)
 	}
 
-	newJTI := uuid.New().String()
-	newRefreshToken, err := jwt.NewRefreshToken(profile.ID.String(), newJTI, s.jwtConfig)
+	newJTI, err := uuid.NewRandom()
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, ErrFailedToGenerateToken)
+	}
+
+	newRefreshToken, err := jwt.NewRefreshToken(profile.ID.String(), newJTI.String(), s.jwtConfig)
 	if err != nil {
 		logger.Log.Error("Failed to generate new refresh token during refresh",
 			slog.String("op", op), slog.String("profile_id", profile.ID.String()), "err", err)
 		return nil, fmt.Errorf("%s: %w", op, ErrFailedToGenerateToken)
 	}
 
-	err = s.refreshTokenRepo.StoreRefreshToken(ctx, profile.ID.String(), newJTI, s.jwtConfig.RefreshTokenTTL)
+	err = s.refreshTokenRepo.StoreRefreshToken(ctx, profile.ID.String(), newJTI.String(), s.jwtConfig.RefreshTokenTTL)
 	if err != nil {
 		logger.Log.Error("Failed to store new refresh token JTI in Redis during refresh",
 			slog.String("op", op), slog.String("profile_id", profile.ID.String()), "err", err)

@@ -8,11 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang/mock/gomock"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
-	"go.uber.org/mock/gomock"
 	"golang.org/x/crypto/bcrypt"
 
+	"github.com/zhavkk/gRPC_auth_service/internal/config"
 	"github.com/zhavkk/gRPC_auth_service/internal/dto"
 	"github.com/zhavkk/gRPC_auth_service/internal/logger"
 	"github.com/zhavkk/gRPC_auth_service/internal/models"
@@ -30,8 +31,12 @@ func TestAuthService_RegisterUser(t *testing.T) {
 	mockArtistRepo := mocks.NewMockArtistRepository(ctrl)
 	mockTx := mocks.NewMockTxManagerInterface(ctrl)
 	mockRTRepo := mocks.NewMockRefreshTokenRepository(ctrl)
-
+	mockOutboxRepo := mocks.NewMockOutboxRepository(ctrl)
 	cfg := jwt.Config{Secret: "secret", AccessTokenTTL: time.Hour, RefreshTokenTTL: 24 * time.Hour}
+	kafkaTopics := config.KafkaTopics{
+		UserCreatedTopic:   "user.registered",
+		ArtistCreatedTopic: "artist.created",
+	}
 	svc := NewAuthService(
 		mockUserRepo,
 		mockProfileRepo,
@@ -39,6 +44,8 @@ func TestAuthService_RegisterUser(t *testing.T) {
 		cfg,
 		mockTx,
 		mockRTRepo,
+		mockOutboxRepo,
+		kafkaTopics,
 	)
 
 	ctx := context.Background()
@@ -67,6 +74,9 @@ func TestAuthService_RegisterUser(t *testing.T) {
 		Return(nil)
 	mockUserRepo.EXPECT().
 		CreateUser(ctx, gomock.Any()).
+		Return(nil)
+	mockOutboxRepo.EXPECT().
+		InsertEventTx(gomock.Any(), "user.registered", gomock.Any(), gomock.Any()).
 		Return(nil)
 
 	resp, err := svc.RegisterUser(ctx, params)
@@ -100,10 +110,22 @@ func TestAuthService_Login(t *testing.T) {
 	mockArtistRepo := mocks.NewMockArtistRepository(ctrl)
 	mockTx := mocks.NewMockTxManagerInterface(ctrl)
 	mockRTRepo := mocks.NewMockRefreshTokenRepository(ctrl)
-
+	mockOutboxRepo := mocks.NewMockOutboxRepository(ctrl)
 	cfg := jwt.Config{Secret: "secret", AccessTokenTTL: time.Hour, RefreshTokenTTL: 24 * time.Hour}
-	svc := NewAuthService(mockUserRepo, mockProfileRepo, mockArtistRepo, cfg, mockTx, mockRTRepo)
-
+	kafkaTopics := config.KafkaTopics{
+		UserCreatedTopic:   "user.registered",
+		ArtistCreatedTopic: "artist.created",
+	}
+	svc := NewAuthService(
+		mockUserRepo,
+		mockProfileRepo,
+		mockArtistRepo,
+		cfg,
+		mockTx,
+		mockRTRepo,
+		mockOutboxRepo,
+		kafkaTopics,
+	)
 	ctx := context.Background()
 	password := "secret"
 	hash, _ := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -146,9 +168,22 @@ func TestAuthService_ChangePassword(t *testing.T) {
 	mockProfileRepo := mocks.NewMockProfileRepository(ctrl)
 	mockUserRepo := mocks.NewMockUserRepository(ctrl)
 	mockArtistRepo := mocks.NewMockArtistRepository(ctrl)
+	mockOutboxRepo := mocks.NewMockOutboxRepository(ctrl)
 	cfg := jwt.Config{Secret: "secret", AccessTokenTTL: time.Hour, RefreshTokenTTL: 24 * time.Hour}
-	svc := NewAuthService(mockUserRepo, mockProfileRepo, mockArtistRepo, cfg, mockTx, mockRTRepo)
-
+	kafkaTopics := config.KafkaTopics{
+		UserCreatedTopic:   "user.registered",
+		ArtistCreatedTopic: "artist.created",
+	}
+	svc := NewAuthService(
+		mockUserRepo,
+		mockProfileRepo,
+		mockArtistRepo,
+		cfg,
+		mockTx,
+		mockRTRepo,
+		mockOutboxRepo,
+		kafkaTopics,
+	)
 	ctx := context.Background()
 	oldPass := "old-pass"
 	hash, _ := bcrypt.GenerateFromPassword([]byte(oldPass), bcrypt.DefaultCost)
@@ -185,9 +220,22 @@ func TestAuthService_GetUser(t *testing.T) {
 	mockTx := mocks.NewMockTxManagerInterface(ctrl)
 	mockRTRepo := mocks.NewMockRefreshTokenRepository(ctrl)
 
+	mockOutboxRepo := mocks.NewMockOutboxRepository(ctrl)
 	cfg := jwt.Config{Secret: "secret", AccessTokenTTL: time.Hour, RefreshTokenTTL: 24 * time.Hour}
-	svc := NewAuthService(mockUserRepo, nil, nil, cfg, mockTx, mockRTRepo)
-
+	kafkaTopics := config.KafkaTopics{
+		UserCreatedTopic:   "user.registered",
+		ArtistCreatedTopic: "artist.created",
+	}
+	svc := NewAuthService(
+		mockUserRepo,
+		nil,
+		nil,
+		cfg,
+		mockTx,
+		mockRTRepo,
+		mockOutboxRepo,
+		kafkaTopics,
+	)
 	ctx := context.Background()
 	userFull := &models.UserFull{
 		ID:       uuid.New(),
@@ -226,10 +274,22 @@ func TestAuthService_UpdateUser(t *testing.T) {
 	mockTx := mocks.NewMockTxManagerInterface(ctrl)
 	mockRTRepo := mocks.NewMockRefreshTokenRepository(ctrl)
 	mockProfileRepo := mocks.NewMockProfileRepository(ctrl)
-
+	mockOutboxRepo := mocks.NewMockOutboxRepository(ctrl)
 	cfg := jwt.Config{Secret: "secret", AccessTokenTTL: time.Hour, RefreshTokenTTL: 24 * time.Hour}
-	svc := NewAuthService(mockUserRepo, mockProfileRepo, nil, cfg, mockTx, mockRTRepo)
-
+	kafkaTopics := config.KafkaTopics{
+		UserCreatedTopic:   "user.registered",
+		ArtistCreatedTopic: "artist.created",
+	}
+	svc := NewAuthService(
+		mockUserRepo,
+		mockProfileRepo,
+		nil,
+		cfg,
+		mockTx,
+		mockRTRepo,
+		mockOutboxRepo,
+		kafkaTopics,
+	)
 	ctx := context.Background()
 	existing := &models.UserFull{ID: uuid.New(), Username: "dave"}
 
@@ -288,9 +348,22 @@ func TestAuthService_RefreshToken(t *testing.T) {
 	mockProfileRepo := mocks.NewMockProfileRepository(ctrl)
 	mockArtistRepo := mocks.NewMockArtistRepository(ctrl)
 
+	mockOutboxRepo := mocks.NewMockOutboxRepository(ctrl)
 	cfg := jwt.Config{Secret: "secret", AccessTokenTTL: time.Hour, RefreshTokenTTL: 24 * time.Hour}
-	svc := NewAuthService(mockUserRepo, mockProfileRepo, mockArtistRepo, cfg, mockTx, mockRTRepo)
-
+	kafkaTopics := config.KafkaTopics{
+		UserCreatedTopic:   "user.registered",
+		ArtistCreatedTopic: "artist.created",
+	}
+	svc := NewAuthService(
+		mockUserRepo,
+		mockProfileRepo,
+		mockArtistRepo,
+		cfg,
+		mockTx,
+		mockRTRepo,
+		mockOutboxRepo,
+		kafkaTopics,
+	)
 	ctx := context.Background()
 	userID := uuid.New().String()
 	oldJTI := "jti-old"
@@ -319,10 +392,22 @@ func TestAuthService_Logout(t *testing.T) {
 	defer ctrl.Finish()
 
 	mockRTRepo := mocks.NewMockRefreshTokenRepository(ctrl)
-
+	mockOutboxRepo := mocks.NewMockOutboxRepository(ctrl)
 	cfg := jwt.Config{Secret: "secret", AccessTokenTTL: time.Hour, RefreshTokenTTL: 24 * time.Hour}
-	svc := NewAuthService(nil, nil, nil, cfg, nil, mockRTRepo)
-
+	kafkaTopics := config.KafkaTopics{
+		UserCreatedTopic:   "user.registered",
+		ArtistCreatedTopic: "artist.created",
+	}
+	svc := NewAuthService(
+		nil,
+		nil,
+		nil,
+		cfg,
+		nil,
+		mockRTRepo,
+		mockOutboxRepo,
+		kafkaTopics,
+	)
 	ctx := context.Background()
 	userID := uuid.New().String()
 	jti := "jti-x"

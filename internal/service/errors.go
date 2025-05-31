@@ -35,4 +35,6 @@ var (
 	ErrAlreadyArtist              = errors.New("already artist")
 	ErrFailedToUpdateArtist       = errors.New("failed to update artist")
 	ErrFailedToUpdateProfile      = errors.New("failed to update profile")
+	ErrFailedToGenerateProfileID  = errors.New("failed to generate profile ID")
+	ErrFailedToInsertEvent        = errors.New("failed to insert event")
 )

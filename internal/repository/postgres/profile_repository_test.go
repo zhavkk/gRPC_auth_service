@@ -25,7 +25,6 @@ func setupProfileTestDB(t *testing.T) *pgxpool.Pool {
 
 	db, err := pgxpool.New(ctx, dsn)
 	require.NoError(t, err)
-	// очищаем только profiles
 	_, err = db.Exec(ctx, "TRUNCATE profiles RESTART IDENTITY CASCADE;")
 	require.NoError(t, err)
 

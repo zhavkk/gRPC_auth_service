@@ -1,4 +1,5 @@
 env: local
+log_level: debug
 
 db_url: postgres://testuser:testpass@localhost:5432/auth_db?sslmode=disable
   
@@ -19,3 +20,26 @@ redis:
   dial_timeout: 5s
   read_timeout: 3s
   write_timeout: 3s
+
+
+kafka:
+  brokers:
+    - localhost:9094 
+  tls:
+    enable: false
+    ca_cert: /certs/ca.pem
+    cert: /certs/client.pem
+    key: /certs/client.key
+  topics:
+    user_created: user.created
+    artist_created: artist.created
+  retries: 5
+  version: "3.2.3"
+  retry_backoff: 100ms
+  flush_frequency: 200ms
+  compression: snappy
+  client_id: auth_service
+
+outbox:
+  batch_size: 100
+  poll_interval: 2s

@@ -20,7 +20,6 @@ var (
 )
 
 func NewStorage(ctx context.Context, cfg *config.Config) (*Storage, error) {
-
 	dsn := cfg.DBURL
 
 	pool, err := pgxpool.New(ctx, dsn)
@@ -32,7 +31,6 @@ func NewStorage(ctx context.Context, cfg *config.Config) (*Storage, error) {
 }
 
 func (s *Storage) Close() error {
-
 	if s.db == nil {
 		return ErrDBNotConnected
 	}
