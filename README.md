@@ -16,6 +16,13 @@ A robust authentication service built with gRPC, providing secure user authentic
   - Artist profile management
   - Artist-specific operations
 
+- **Event-Driven Architecture**
+  - Kafka integration for asynchronous event processing
+  - Sarama library for Kafka client implementation
+  - AsyncProducer for non-blocking message publishing
+  - Events published to `user.created` and `artist.created` topics
+  - Outbox pattern for reliable message delivery
+
 - **Security**
   - JWT-based authentication
   - Access and refresh token support
@@ -33,6 +40,7 @@ A robust authentication service built with gRPC, providing secure user authentic
 - Go 1.24.2 or higher
 - PostgreSQL 15
 - Redis
+- Apache Kafka
 - Protocol Buffers compiler (protoc)
 - Docker and Docker Compose (for containerized deployment)
 
@@ -46,8 +54,12 @@ gRPC_auth_service/
 ├── internal/       # Internal packages
 │   ├── app/       # Application setup
 │   ├── dto/       # Data Transfer Objects
+│   │   └── kafka/ # Kafka event DTOs
 │   ├── grpc/      # gRPC server implementation
+│   ├── kafka/     # Kafka integration
+│   │   └── producer/ # Kafka producer implementation
 │   ├── models/    # Domain models
+│   ├── outbox/    # Outbox pattern implementation
 │   ├── pkg/       # Shared packages
 │   ├── repository/# Database repositories
 │   ├── service/   # Business logic
@@ -61,7 +73,7 @@ gRPC_auth_service/
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/yourusername/gRPC_auth_service.git
+   git clone https://github.com/zhavkk/gRPC_auth_service.git
    cd gRPC_auth_service
    ```
 
@@ -111,12 +123,14 @@ go test ./...
 
 - `make build` - Build the service
 - `make run` - Run the service
-- `make compose-up` - Start Docker containers
+- `make compose-up` - Start Docker containers (PostgreSQL, Redis, Kafka, Zookeeper)
 - `make compose-down` - Stop Docker containers
 - `make migrate-up` - Run database migrations
 - `make migrate-down` - Rollback database migrations
 - `make gen-pb` - Generate Protocol Buffer code
 - `make test-deps-up` - Start test dependencies
+- `make kafka-topics` - Create required Kafka topics
+- `make kafka-consume` - Start a test consumer for debugging
 
 ## API Endpoints
 
@@ -139,9 +153,22 @@ The service can be configured using environment variables or a YAML configuratio
 
 - Database connection string
 - Redis connection details
+- Kafka broker addresses and configuration
 - JWT secret and token TTLs
 - gRPC server port
 - Log level
+
+### Kafka Configuration
+
+The service uses Apache Kafka for event publishing with these key settings:
+
+- Brokers: List of Kafka broker addresses
+- Topics: `user.created` and `artist.created`
+- Producer configuration:
+  - Sarama AsyncProducer settings
+  - Delivery report channels
+  - Retry policy
+  - Batch settings
 
 ## Security
 
@@ -150,6 +177,31 @@ The service can be configured using environment variables or a YAML configuratio
 - Refresh tokens are stored in Redis with expiration
 - Role-based access control is implemented
 - Input validation is performed on all requests
+
+## Event-Driven Architecture
+
+This service implements an event-driven architecture pattern using Apache Kafka for asynchronous communication with other services.
+
+### Kafka Integration
+
+- **Library**: Uses [Sarama](https://github.com/IBM/sarama), a Go client library for Apache Kafka
+- **Producer Type**: AsyncProducer for non-blocking, high-throughput event publishing
+- **Topics**:
+  - `user.created` - Published when a new regular user is registered
+  - `artist.created` - Published when a new artist is registered
+- **Event Format**: Events contain user/artist profile details in JSON format
+- **Reliability**: Implements the Outbox pattern to ensure event publishing reliability:
+  1. Saves events in an outbox table within the same transaction as the user/artist creation
+  2. Background worker processes outbox entries and publishes them to Kafka
+  3. Ensures at-least-once delivery semantics
+  4. Provides idempotency keys for downstream services
+
+### Handling Kafka Producer Failures
+
+The service handles Kafka producer failures gracefully:
+- Connection issues are logged and retried
+- Failed deliveries are captured through error channels
+- The outbox pattern ensures messages are not lost if Kafka is temporarily unavailable
 
 ## Contributing
 
